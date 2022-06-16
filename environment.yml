@@ -17,6 +17,6 @@ dependencies:
   - pip:
     - ffcv
     - tensorboard
-    - hydra
+    - hydra-core==1.2.0
     - submitit
-    # - hydra-fair-cluster
+    - hydra-fair-cluster

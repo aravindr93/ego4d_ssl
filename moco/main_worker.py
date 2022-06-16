@@ -21,7 +21,7 @@ import torchvision.models as models
 import moco.loader
 import moco.builder
 
-from mjrl.utils.logger import DataLog
+# from mjrl.utils.logger import DataLog
 from omegaconf import DictConfig, OmegaConf
 
 
@@ -138,10 +138,10 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # Create logger
     logger = None
-    if args.logging.log_tb and args.environment.gpu == 0:
-        logger = DataLog(wandb_user=args.logging.wandb_user,
-                         wandb_project=args.logging.wandb_project,
-                         wandb_config=OmegaConf.to_container(args, resolve=True))
+    # if args.logging.log_tb and args.environment.gpu == 0:
+    #     logger = DataLog(wandb_user=args.logging.wandb_user,
+    #                      wandb_project=args.logging.wandb_project,
+    #                      wandb_config=OmegaConf.to_container(args, resolve=True))
 
     cudnn.benchmark = True
 
