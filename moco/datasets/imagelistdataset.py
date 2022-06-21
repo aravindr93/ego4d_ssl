@@ -41,6 +41,25 @@ def longtail_class_distrib(list_fname=None, seed=0, num_classes=-1):
     return class_distrib
 
 
+class BasicImageDataset(data.Dataset):
+    def __init__(self, list_fname):
+        super().__init__()
+        assert (
+            os.path.exists(list_fname)), '{} does not exist'.format(list_fname)
+        with open(list_fname, 'r') as f:
+            filedata = f.read().splitlines()
+
+        self.filelist = [d.split(' ')[0] for d in filedata]
+
+    def __getitem__(self, index):
+        fname = self.filelist[index]
+        image = datasets.folder.pil_loader(fname)
+        result = [image, index]
+        return result
+
+    def __len__(self):
+        return len(self.filelist)
+
 class ImageListDataset(data.Dataset):
     """Dataset that reads videos"""
 
@@ -59,13 +78,16 @@ class ImageListDataset(data.Dataset):
                                   for d in filedata]
             print(self.pair_filelist[:10])
 
-        if not isinstance(transforms, list):
-            transforms = [transforms]
-        self.transforms = transforms
-        self.std = torch.Tensor(self.transforms[0].transforms[-1].std).view(
-            3, 1, 1)
-        self.mean = torch.Tensor(self.transforms[0].transforms[-1].mean).view(
-            3, 1, 1)
+        if transforms is not None:
+            if not isinstance(transforms, list):
+                transforms = [transforms]
+            self.transforms = transforms
+            self.std = torch.Tensor(self.transforms[0].transforms[-1].std).view(
+                3, 1, 1)
+            self.mean = torch.Tensor(self.transforms[0].transforms[-1].mean).view(
+                3, 1, 1)
+        else:
+            self.transforms = None
 
     def __getitem__(self, index):
         """TODO: Docstring for __getitem__.

@@ -1,0 +1,3 @@
+[submodule "third_party/mjrl"]
+	path = third_party/mjrl
+	url = git@github.com:aravindr93/mjrl.git
