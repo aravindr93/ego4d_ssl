@@ -151,6 +151,7 @@ def main_worker(gpu, ngpus_per_node, args):
                                      std=[0.229, 0.224, 0.225])
     if args.data.augmentations == 'all':
         augmentation = transforms.Compose([
+            transforms.Resize((252, 252)),
             transforms.RandomResizedCrop(args.data.imsize, scale=(0.2, 1.)),
             transforms.RandomApply(
                 [
@@ -161,7 +162,7 @@ def main_worker(gpu, ngpus_per_node, args):
             transforms.RandomGrayscale(p=0.2),
             transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])],
                                    p=0.5),
-            transforms.RandomHorizontalFlip(),
+            # transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize
         ])
