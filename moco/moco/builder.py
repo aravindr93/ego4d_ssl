@@ -8,7 +8,7 @@ class MoCo(nn.Module):
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(self, base_encoder, dim=128, K=65536, m=0.999, T=0.07, mlp=False):
+    def __init__(self, base_encoder, dim=128, K=65536, m=0.999, T=0.07, mlp=False, input_sec=1):
         """
         dim: feature dimension (default: 128)
         K: queue size; number of negative keys (default: 65536)
@@ -26,6 +26,12 @@ class MoCo(nn.Module):
         self.encoder_q = base_encoder(num_classes=dim)
         self.encoder_k = base_encoder(num_classes=dim)
 
+        if input_sec > 1: # support for multiple input images
+            self.encoder_q.conv1.weight.data = self.encoder_q.conv1.weight.data.repeat(1, input_sec, 1, 1)
+            self.encoder_k.conv1.weight.data = self.encoder_k.conv1.weight.data.repeat(1, input_sec, 1, 1)
+            self.encoder_q.conv1.in_channels = self.encoder_q.conv1.in_channels * input_sec
+            self.encoder_k.conv1.in_channels = self.encoder_k.conv1.in_channels * input_sec
+        
         if mlp:  # hack: brute-force replacement
             dim_mlp = self.encoder_q.fc.weight.shape[1]
             self.encoder_q.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.fc)

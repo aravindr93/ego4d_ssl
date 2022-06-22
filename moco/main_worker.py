@@ -57,7 +57,8 @@ def main_worker(gpu, ngpus_per_node, args):
     model = moco.builder.MoCo(models.__dict__[args.model.arch],
                               args.model.moco_dim, args.model.moco_k,
                               args.model.moco_m, args.model.moco_t,
-                              args.model.mlp)
+                              args.model.mlp, args.model.input_sec)
+
     if args.model.sync_bn:
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     print(model)
@@ -188,6 +189,9 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.data.type == 'standard':
         train_dataset = datasets.imagelistdataset.ImageListDataset(
             trainfname, transforms=augmentation)
+    elif args.data.type == 'dmcontrol':
+        train_dataset = datasets.imagelistdataset.DMControlDataset(
+            trainfname)
     elif args.data.type == 'longtail':
         train_dataset = datasets.imagelistdataset.LongTailImageListDataset(
             trainfname, transforms=augmentation, seed=args.data.seed)

@@ -8,4 +8,4 @@
 #PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=ego4d_5m data.train_filelist=datasets/ego4d_5m.txt environment.ngpu=8 environment.world_size=2
 
 # Train on DMControl dataset (1M frames)
-PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=dmcontrol-walker environment.ngpu=8 environment.world_size=2
+PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=dmcontrol-walker-3seq environment.ngpu=8 environment.world_size=2

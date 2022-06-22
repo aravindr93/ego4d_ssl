@@ -1,14 +1,21 @@
+from ctypes import resize
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
-import torchvision.transforms.functional as transF
+import torchvision.transforms.functional as TF
+from torchvision.utils import make_grid, save_image
+from PIL import ImageFilter
 import torch.utils.data as data
 import numpy as np
-import pdb
-import itertools
 import torch
 import os
+import random
+from copy import deepcopy
 from scipy.stats import gamma
 from collections import defaultdict
+import sys
+sys.path.append('../')
+import moco.loader
+import moco.builder
 
 
 def longtail_class_distrib(list_fname=None, seed=0, num_classes=-1):
@@ -104,6 +111,155 @@ class ImageListDataset(data.Dataset):
 
         """
         return len(self.pair_filelist)
+
+
+class DMControlDataset(data.Dataset):
+    """Dataset that reads DMControl videos"""
+
+    # transforms:
+    #  0. resize to 252x252
+    def resize_all(self, ims):
+        return [TF.resize(im, (252, 252)) for im in ims]
+
+    #  1. random resized crop
+    def resize_crop_all(self, ims):
+        params = transforms.RandomResizedCrop.get_params(ims[0], scale=(0.2, 1.0), ratio=(0.75, 1.3333333333333333))
+        return [TF.resized_crop(im, *params, size=(224, 224)) for im in ims]
+
+    #  2. random apply (color jitter)
+    def color_jitter_all(self, ims):
+        p = 0.8
+        if np.random.rand() < p:
+            brightness = 0.4
+            contrast = 0.4
+            saturation = 0.4
+            hue = 0.1
+            params = transforms.ColorJitter.get_params(
+                [max(0, 1 - brightness), 1 + brightness],
+                [max(0, 1 - contrast), 1 + contrast],
+                [max(0, 1 - saturation), 1 + saturation],
+                [-hue, hue])
+            for fn_id in params[0]:
+                if fn_id == 0:
+                    ims = [TF.adjust_brightness(im, params[1]) for im in ims]
+                elif fn_id == 1:
+                    ims = [TF.adjust_contrast(im, params[2]) for im in ims]
+                elif fn_id == 2:
+                    ims = [TF.adjust_saturation(im, params[3]) for im in ims]
+                elif fn_id == 3:
+                    ims = [TF.adjust_hue(im, params[4]) for im in ims]
+        return ims
+
+    #  3. random grayscale
+    def grayscale_all(self, ims):
+        p = 0.2
+        if np.random.rand() < p:
+            ims = [TF.to_grayscale(im, num_output_channels=3) for im in ims]
+        return ims
+
+    #  4. random Gaussian blur
+    def gaussian_blur_all(self, ims):
+        p = 0.5
+        if np.random.rand() < p:
+            sigma = random.uniform(.1, 2.)
+            ims = [im.filter(ImageFilter.GaussianBlur(radius=sigma)) for im in ims]
+        return ims
+
+    # 5. to tensor
+    def to_tensor_all(self, ims):
+        return [TF.to_tensor(im) for im in ims]
+
+    # 6. normalize
+    def normalize_all(self, ims):
+        return [TF.normalize(im, self.mean, self.std) for im in ims]
+
+    def __init__(self, list_fname, input_sec=3):
+        """TODO: to be defined.
+
+        :filelist: TODO
+
+        """
+        data.Dataset.__init__(self)
+        assert (
+            os.path.exists(list_fname)), '{} does not exist'.format(list_fname)
+        with open(list_fname, 'r') as f:
+            filedata = f.read().splitlines()
+            self.filelist = [d.split(' ')[0] for d in filedata]
+        assert input_sec > 1, 'input_sec must be greater than 1'
+        print('dmcontrol dataset with {} input_sec'.format(input_sec))
+        self.filelist = self.filelist[:5000]
+        for i,f in enumerate(self.filelist):
+             # extract frame id from filename
+            base = os.path.basename(f)
+            frame_id = base.split('.')[0].split('_')[-1]
+            frame_id = int(frame_id)
+
+            # adjust frame id if at the start/end of video
+            padding = input_sec // 2
+
+            if frame_id < padding:
+                frame_id = padding
+            elif frame_id > 501 - padding:
+                frame_id = 501 - padding
+
+            self.filelist[i] = [
+                os.path.join(os.path.dirname(f), \
+                    '_'.join(base.split('.')[0].split('_')[:-1]) + f'_{idx:03d}.png') \
+                        for idx in range(frame_id - padding, frame_id + padding + 1)
+            ]
+        print(self.filelist[:4])
+        
+        self.transforms = [
+            self.resize_all,
+            self.resize_crop_all,
+            self.color_jitter_all,
+            self.grayscale_all,
+            self.gaussian_blur_all,
+            self.to_tensor_all,
+            self.normalize_all,
+        ]
+        self.mean = torch.Tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        self.std = torch.Tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+        self.input_sec = input_sec
+
+    def __getitem__(self, index):
+        """TODO: Docstring for __getitem__.
+
+        :index: TODO
+        :returns: TODO
+
+        """
+        frames = self.filelist[index]
+        assert len(frames) == self.input_sec, '{} frames'.format(len(frames))
+
+        ims = [datasets.folder.pil_loader(f) for f in frames]
+        ims1, ims2 = ims, deepcopy(ims)
+
+        meta = {}
+        i = 0
+
+        for transform in self.transforms:
+            ims1 = transform(ims1)
+            ims2 = transform(ims2)
+
+        meta['transind1'] = i
+        meta['transind2'] = i
+
+        out = {
+            'input1': torch.cat(ims1, dim=0),
+            'input2': torch.cat(ims2, dim=0),
+            'meta': meta,
+        }
+        return out
+
+    def __len__(self):
+        """TODO: Docstring for __len__.
+
+        :f: TODO
+        :returns: TODO
+
+        """
+        return len(self.filelist)
 
 
 class LongTailImageListDataset(ImageListDataset):
@@ -221,3 +377,61 @@ class ImageListStandardDataset(data.Dataset):
 
         """
         return len(self.pair_filelist)
+
+
+
+if __name__ == '__main__':
+    list_fname = '/checkpoint/nihansen/data/tdmpc2/dmcontrol.txt'
+
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    augmentation = transforms.Compose([
+        transforms.Resize((252, 252)),
+        transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+        transforms.RandomApply(
+            [
+                transforms.ColorJitter(0.4, 0.4, 0.4,
+                                        0.1)  # not strengthened
+            ],
+            p=0.8),
+        transforms.RandomGrayscale(p=0.2),
+        transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])],
+                                p=0.5),
+        # transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize
+    ])
+
+    dataset = DMControlDataset(list_fname)
+    rows = []
+
+    for i in range(16):
+        _data = dataset[i]
+        im0, im1 = [_data['input1'], _data['input2']]
+        row = torch.stack([im0, im1], dim=0)
+        rows.append(row)
+    
+    # save as grid
+    grid = make_grid(torch.cat(rows, dim=0), nrow=2)
+    save_image(grid, 'grid_ours.png')
+
+    dataset_prev = ImageListDataset(list_fname, transforms=augmentation)
+    rows = []
+
+    for i in range(16):
+        _data = dataset_prev[i]
+        im0, im1 = [_data['input1'], _data['input2']]
+        row = torch.stack([im0, im1], dim=0)
+        rows.append(row)
+
+    # save as grid
+    grid = make_grid(torch.cat(rows, dim=0), nrow=2)
+    save_image(grid, 'grid_prev.png')
+
+    # build model
+    import torchvision.models as models
+    model = moco.builder.MoCo(models.__dict__['resnet50'],
+                              128, 65536,
+                              0.999, 0.07,
+                              True, 3)
+    print(model.conv1)

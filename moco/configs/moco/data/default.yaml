@@ -1,4 +1,4 @@
-type: 'standard'
+type: 'dmcontrol'
 # train_filelist: './datasets/ego4d_100k.txt'  # command line argument required for training
 # val_filelist:   './datasets/ego4d_100k.txt'  # not used anywhere
 train_filelist: '/checkpoint/nihansen/data/tdmpc2/dmcontrol.txt'
