@@ -1,3 +1,6 @@
+# NH
+moco/datasets/ego4d_5m.txt
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

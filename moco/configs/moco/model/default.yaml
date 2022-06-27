@@ -7,4 +7,4 @@ mlp: True
 pretrained: False
 load_path: ''
 sync_bn: False
-input_sec: 3
+input_sec: 1

@@ -31,7 +31,7 @@ class MoCo(nn.Module):
             self.encoder_k.conv1.weight.data = self.encoder_k.conv1.weight.data.repeat(1, input_sec, 1, 1)
             self.encoder_q.conv1.in_channels = self.encoder_q.conv1.in_channels * input_sec
             self.encoder_k.conv1.in_channels = self.encoder_k.conv1.in_channels * input_sec
-        
+
         if mlp:  # hack: brute-force replacement
             dim_mlp = self.encoder_q.fc.weight.shape[1]
             self.encoder_q.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.fc)

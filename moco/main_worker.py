@@ -191,7 +191,7 @@ def main_worker(gpu, ngpus_per_node, args):
             trainfname, transforms=augmentation)
     elif args.data.type == 'dmcontrol':
         train_dataset = datasets.imagelistdataset.DMControlDataset(
-            trainfname)
+            trainfname, input_sec=args.model.input_sec)
     elif args.data.type == 'longtail':
         train_dataset = datasets.imagelistdataset.LongTailImageListDataset(
             trainfname, transforms=augmentation, seed=args.data.seed)

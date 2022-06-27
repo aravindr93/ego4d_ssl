@@ -117,14 +117,11 @@ class DMControlDataset(data.Dataset):
     """Dataset that reads DMControl videos"""
 
     # transforms:
-    #  0. resize to 252x252
-    def resize_all(self, ims):
-        return [TF.resize(im, (252, 252)) for im in ims]
 
     #  1. random resized crop
     def resize_crop_all(self, ims):
-        params = transforms.RandomResizedCrop.get_params(ims[0], scale=(0.2, 1.0), ratio=(0.75, 1.3333333333333333))
-        return [TF.resized_crop(im, *params, size=(224, 224)) for im in ims]
+        params = transforms.RandomResizedCrop.get_params(ims[0], scale=(0.3, 1.2), ratio=(0.75, 1.3333333333333333))
+        return [TF.resized_crop(im, *params, size=(84, 84)) for im in ims]
 
     #  2. random apply (color jitter)
     def color_jitter_all(self, ims):
@@ -185,23 +182,20 @@ class DMControlDataset(data.Dataset):
         with open(list_fname, 'r') as f:
             filedata = f.read().splitlines()
             self.filelist = [d.split(' ')[0] for d in filedata]
-        assert input_sec > 1, 'input_sec must be greater than 1'
         print('dmcontrol dataset with {} input_sec'.format(input_sec))
-        self.filelist = self.filelist[:5000]
+
         for i,f in enumerate(self.filelist):
-             # extract frame id from filename
+            # extract frame id from filename
             base = os.path.basename(f)
             frame_id = base.split('.')[0].split('_')[-1]
             frame_id = int(frame_id)
 
             # adjust frame id if at the start/end of video
             padding = input_sec // 2
-
             if frame_id < padding:
                 frame_id = padding
-            elif frame_id > 501 - padding:
-                frame_id = 501 - padding
-
+            elif frame_id > 500 - padding:
+                frame_id = 500 - padding
             self.filelist[i] = [
                 os.path.join(os.path.dirname(f), \
                     '_'.join(base.split('.')[0].split('_')[:-1]) + f'_{idx:03d}.png') \
@@ -210,7 +204,6 @@ class DMControlDataset(data.Dataset):
         print(self.filelist[:4])
         
         self.transforms = [
-            self.resize_all,
             self.resize_crop_all,
             self.color_jitter_all,
             self.grayscale_all,
@@ -386,8 +379,7 @@ if __name__ == '__main__':
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     augmentation = transforms.Compose([
-        transforms.Resize((252, 252)),
-        transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+        transforms.RandomResizedCrop(84, scale=(0.3, 1.2)),
         transforms.RandomApply(
             [
                 transforms.ColorJitter(0.4, 0.4, 0.4,
@@ -402,36 +394,39 @@ if __name__ == '__main__':
         normalize
     ])
 
-    dataset = DMControlDataset(list_fname)
-    rows = []
-
-    for i in range(16):
-        _data = dataset[i]
-        im0, im1 = [_data['input1'], _data['input2']]
-        row = torch.stack([im0, im1], dim=0)
-        rows.append(row)
+    dataset = DMControlDataset(list_fname, input_sec=3)
     
-    # save as grid
-    grid = make_grid(torch.cat(rows, dim=0), nrow=2)
-    save_image(grid, 'grid_ours.png')
+    # rows = []
+    # for i in range(16):
+    #     _data = dataset[i]
+    #     im0, im1 = [_data['input1'], _data['input2']]
+    #     row = torch.stack([im0, im1], dim=0)
+    #     rows.append(row)
+    
+    # # save as grid
+    # grid = make_grid(torch.cat(rows, dim=0), nrow=2)
+    # save_image(grid, 'grid_ours.png')
 
-    dataset_prev = ImageListDataset(list_fname, transforms=augmentation)
-    rows = []
+    # dataset_prev = ImageListDataset(list_fname, transforms=augmentation)
+    # rows = []
 
-    for i in range(16):
-        _data = dataset_prev[i]
-        im0, im1 = [_data['input1'], _data['input2']]
-        row = torch.stack([im0, im1], dim=0)
-        rows.append(row)
+    # for i in range(16):
+    #     _data = dataset_prev[i]
+    #     im0, im1 = [_data['input1'], _data['input2']]
+    #     row = torch.stack([im0, im1], dim=0)
+    #     rows.append(row)
 
-    # save as grid
-    grid = make_grid(torch.cat(rows, dim=0), nrow=2)
-    save_image(grid, 'grid_prev.png')
+    # # save as grid
+    # grid = make_grid(torch.cat(rows, dim=0), nrow=2)
+    # save_image(grid, 'grid_prev.png')
 
     # build model
     import torchvision.models as models
     model = moco.builder.MoCo(models.__dict__['resnet50'],
                               128, 65536,
                               0.999, 0.07,
-                              True, 3)
-    print(model.conv1)
+                              True, 3).cuda()
+
+    _data = dataset[0]
+    im0, im1 = _data['input1'].unsqueeze(0).cuda(), _data['input2'].unsqueeze(0).cuda()
+    print(im0.shape, im1.shape)

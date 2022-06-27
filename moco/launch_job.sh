@@ -5,7 +5,13 @@
 # PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=ego4d_100k data.train_filelist=datasets/ego4d_100k.txt environment.ngpu=8 environment.world_size=2
 
 # Train on approx 5 million frames (r3m dataset)
-#PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=ego4d_5m data.train_filelist=datasets/ego4d_5m.txt environment.ngpu=8 environment.world_size=2
+# PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=ego4d_5m data.train_filelist=datasets/ego4d_5m.txt environment.ngpu=8 environment.world_size=2 data.type=standard model.input_sec=1
 
-# Train on DMControl dataset (1M frames)
-PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=dmcontrol-walker-3seq environment.ngpu=8 environment.world_size=2
+# Train on DMControl dataset (1M frames; 3 frames per sample)
+# PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=dmcontrol-walker-seq3 environment.ngpu=8 environment.world_size=2
+
+# Train on DMControl dataset (1M frames; june 22 experiment)
+# PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=dmcontrol-walker-5m data.train_filelist="/checkpoint/nihansen/data/tdmpc2/dmcontrol_5m.txt" environment.ngpu=8 environment.world_size=2 data.type=dmcontrol model.input_sec=3 data.imsize=84
+
+# Train on DMControl dataset (1M frames; input 224x224; seq3)
+# PYTHONPATH=. python main_moco.py environment.slurm=True logging.name=dmcontrol-walker-5m-seq3-test data.train_filelist="/checkpoint/nihansen/data/tdmpc2/dmcontrol_5m.txt" environment.ngpu=8 environment.world_size=2 data.type=dmcontrol model.input_sec=3 optim.epochs=2
