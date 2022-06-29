@@ -169,6 +169,7 @@ def main_worker(gpu, ngpus_per_node, args):
         ])
     elif args.data.augmentations == 'crop':
         augmentation = transforms.Compose([
+            transforms.Resize((256, 256)),
             transforms.RandomResizedCrop(args.data.imsize, scale=(0.2, 1.)),
             transforms.ToTensor(), normalize
         ])
