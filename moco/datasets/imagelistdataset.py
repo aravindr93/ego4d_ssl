@@ -117,11 +117,14 @@ class DMControlDataset(data.Dataset):
     """Dataset that reads DMControl videos"""
 
     # transforms:
+    #  0. resize to 252x252
+    def resize_all(self, ims):
+        return [TF.resize(im, (252, 252)) for im in ims]
 
     #  1. random resized crop
     def resize_crop_all(self, ims):
-        params = transforms.RandomResizedCrop.get_params(ims[0], scale=(0.3, 1.2), ratio=(0.75, 1.3333333333333333))
-        return [TF.resized_crop(im, *params, size=(84, 84)) for im in ims]
+        params = transforms.RandomResizedCrop.get_params(ims[0], scale=(0.2, 1.0), ratio=(0.75, 1.3333333333333333))
+        return [TF.resized_crop(im, *params, size=(224, 224)) for im in ims]
 
     #  2. random apply (color jitter)
     def color_jitter_all(self, ims):
@@ -204,6 +207,7 @@ class DMControlDataset(data.Dataset):
         print(self.filelist[:4])
         
         self.transforms = [
+            self.resize_all,
             self.resize_crop_all,
             self.color_jitter_all,
             self.grayscale_all,
