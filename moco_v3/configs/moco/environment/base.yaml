@@ -13,8 +13,8 @@ seed: 0
 gpu: ''
 ngpu: 4
 slurm: False
-# slurm_partition: learnfair
-slurm_partition: devlab
+slurm_partition: learnfair
+# slurm_partition: devlab
 slurm_timeout: 600
 print_freq: ${logging.print_freq}
 evaluate: False

@@ -8,7 +8,17 @@ class MoCo(nn.Module):
     Build a MoCo model with: a query encoder, a key encoder, and a queue
     https://arxiv.org/abs/1911.05722
     """
-    def __init__(self, base_encoder, dim=128, K=65536, m=0.999, T=0.07, mlp=False):
+
+    def __init__(
+        self,
+        base_encoder,
+        dim=128,
+        K=65536,
+        m=0.999,
+        T=0.07,
+        mlp=False,
+        load_path=None,
+    ):
         """
         dim: feature dimension (default: 128)
         K: queue size; number of negative keys (default: 65536)
@@ -23,15 +33,25 @@ class MoCo(nn.Module):
 
         # create the encoders
         # num_classes is the output fc dimension
-        self.encoder_q = base_encoder(num_classes=dim)
-        self.encoder_k = base_encoder(num_classes=dim)
+        if load_path not in [None, ""]:
+            self.encoder_q = load_pretrained_model(base_encoder, load_path, dim)
+            self.encoder_k = load_pretrained_model(base_encoder, load_path, dim)
+        else:
+            self.encoder_q = base_encoder(num_classes=dim)
+            self.encoder_k = base_encoder(num_classes=dim)
 
         if mlp:  # hack: brute-force replacement
             dim_mlp = self.encoder_q.fc.weight.shape[1]
-            self.encoder_q.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.fc)
-            self.encoder_k.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_k.fc)
+            self.encoder_q.fc = nn.Sequential(
+                nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.fc
+            )
+            self.encoder_k.fc = nn.Sequential(
+                nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_k.fc
+            )
 
-        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
+        for param_q, param_k in zip(
+            self.encoder_q.parameters(), self.encoder_k.parameters()
+        ):
             param_k.data.copy_(param_q.data)  # initialize
             param_k.requires_grad = False  # not update by gradient
 
@@ -46,8 +66,10 @@ class MoCo(nn.Module):
         """
         Momentum update of the key encoder
         """
-        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
-            param_k.data = param_k.data * self.m + param_q.data * (1. - self.m)
+        for param_q, param_k in zip(
+            self.encoder_q.parameters(), self.encoder_k.parameters()
+        ):
+            param_k.data = param_k.data * self.m + param_q.data * (1.0 - self.m)
 
     @torch.no_grad()
     def _dequeue_and_enqueue(self, keys):
@@ -60,7 +82,7 @@ class MoCo(nn.Module):
         assert self.K % batch_size == 0  # for simplicity
 
         # replace the keys at ptr (dequeue and enqueue)
-        self.queue[:, ptr:ptr + batch_size] = keys.T
+        self.queue[:, ptr : ptr + batch_size] = keys.T
         ptr = (ptr + batch_size) % self.K  # move pointer
 
         self.queue_ptr[0] = ptr
@@ -141,9 +163,9 @@ class MoCo(nn.Module):
         # compute logits
         # Einstein sum is more intuitive
         # positive logits: Nx1
-        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
+        l_pos = torch.einsum("nc,nc->n", [q, k]).unsqueeze(-1)
         # negative logits: NxK
-        l_neg = torch.einsum('nc,ck->nk', [q, self.queue.clone().detach()])
+        l_neg = torch.einsum("nc,ck->nk", [q, self.queue.clone().detach()])
 
         # logits: Nx(1+K)
         logits = torch.cat([l_pos, l_neg], dim=1)
@@ -167,9 +189,34 @@ def concat_all_gather(tensor):
     Performs all_gather operation on the provided tensors.
     *** Warning ***: torch.distributed.all_gather has no gradient.
     """
-    tensors_gather = [torch.ones_like(tensor)
-        for _ in range(torch.distributed.get_world_size())]
+    tensors_gather = [
+        torch.ones_like(tensor) for _ in range(torch.distributed.get_world_size())
+    ]
     torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
 
     output = torch.cat(tensors_gather, dim=0)
     return output
+
+
+# model loading function
+def load_pretrained_model(
+    base_encoder: callable,
+    load_path: str,
+    dim: int,
+) -> nn.Module:
+    """Load a pretrained model for downstream adaptation with MoCo"""
+    # num_classes is the output fc dimension
+    model = base_encoder(num_classes=dim)
+    checkpoint = torch.load(load_path, map_location=torch.device("cpu"))
+    # rename moco pre-trained keys
+    state_dict = checkpoint["state_dict"]
+    for k in list(state_dict.keys()):
+        # retain only encoder_q up to before the embedding layer
+        if k.startswith("module.encoder_q") and not k.startswith("module.encoder_q.fc"):
+            # remove prefix
+            state_dict[k[len("module.encoder_q.") :]] = state_dict[k]
+        # delete renamed or unused k
+        del state_dict[k]
+    msg = model.load_state_dict(state_dict, strict=False)
+    assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
+    return model
