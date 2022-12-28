@@ -1,0 +1,11 @@
+defaults:
+    - _self_
+    - suite: DMC
+
+data_dir: '/checkpoint/aravraj/pvr_project_data/datasets/'
+augmentations: False
+
+envs: ???
+fuse_embeddings: 'flare'
+history_window: 3
+latent_state_dim: 256

@@ -1,0 +1,5 @@
+name: 'Adroit'
+prefix: ''
+suffix: '-v0'
+img_keys: ["images"]
+prop_key: False

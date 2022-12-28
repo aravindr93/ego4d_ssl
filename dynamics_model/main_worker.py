@@ -2,10 +2,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import builtins
 import math
+import random
 import os
 import time
 import sys
 import shutil
+import pickle
 
 import torch
 import torch.nn as nn
@@ -15,36 +17,19 @@ import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.transforms as transforms
-import datasets.imagelistdataset, datasets.pickle_path_dataset
-import torchvision.models as torchvision_models
-
-import moco.loader
-import moco.builder
-import moco.optimizer
-import moco_vit
 
 from mjrl.utils.logger import DataLog
+from utils.fusion import fuse_preprocess, fuse_base
+from utils.model_loading import load_pvr_model
+from utils.models import InverseDynamicsModel, ForwardDynamicsModel
+from utils.optimizer import LARS
+from datasets.dataset import FrameDataset
+from collections import defaultdict
+
 from omegaconf import DictConfig, OmegaConf
 from functools import partial
 
-torchvision_model_names = sorted(
-    name
-    for name in torchvision_models.__dict__
-    if name.islower()
-    and not name.startswith("__")
-    and callable(torchvision_models.__dict__[name])
-)
-
-model_names = [
-    "vit_small",
-    "vit_base",
-    "vit_conv_small",
-    "vit_conv_base",
-] + torchvision_model_names
-
-
-def main_worker(gpu, ngpus_per_node, args):
+def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
     # args = OmegaConf.to_container(args, resolve=True, throw_on_missing=True)
     cudnn.benchmark = True
     args.environment.gpu = gpu
@@ -75,32 +60,45 @@ def main_worker(gpu, ngpus_per_node, args):
         )
         torch.distributed.barrier()
 
-    # create model
-    print("=> creating model '{}'".format(args.model.arch))
-    assert args.model.arch in ["vit_small", "vit_base", "resnet50", "resnet18"]
-    if args.model.arch.startswith("vit"):
-        model = moco.builder.MoCo_ViT(
-            partial(
-                moco_vit.__dict__[args.model.arch],
-                stop_grad_conv1=args.model.stop_grad_conv1,
-            ),
-            args.model.moco_dim,
-            args.model.moco_mlp_dim,
-            args.model.moco_t,
-            args.model.load_path,
-        )
-    else:
-        model = moco.builder.MoCo_ResNet(
-            partial(
-                torchvision_models.__dict__[args.model.arch], zero_init_residual=True
-            ),
-            args.model.moco_dim,
-            args.model.moco_mlp_dim,
-            args.model.moco_t,
-            args.model.load_path,
-        )
+    if isinstance(args.data.envs, str):
+        args.data.envs = [args.data.envs]
+    paths = []
+    for env in args.data.envs:
+        env_id = args.data.suite.prefix + env + args.data.suite.suffix
+        paths_loc = args.data.data_dir + args.data.suite.name + "/" + env_id + ".pickle"
+        try:
+            paths.extend(pickle.load(open(paths_loc, 'rb')))
+        except:
+            print("Unable to load the data. Check the data path.")
+            print(paths_loc)
+            quit()
+    train_dataset = FrameDataset(model, embedding_dim, transforms, paths, args.data, "cuda:{}".format(args.environment.gpu))
 
-    # print(model)
+    # prepare fusion functions for combining embeddings across multiple views or history window
+    fusion_preprocess = fuse_preprocess[args.data.fuse_embeddings]
+    fusion_base = fuse_base[args.data.fuse_embeddings]
+    fusion_base = fusion_base(embedding_dim, args.data.history_window, num_views=len(args.data.suite.img_keys))
+    fused_embedding_dim = fusion_base.latent_dim
+
+    # construct the behavior cloning policy
+    action_dim = paths[0]['actions'].shape[-1]
+    proprioception_dim = train_dataset.proprioception_dim
+    latent_state_dim = args.data.latent_state_dim
+    print(f"Representation Embedding dim: {embedding_dim}")
+    print(f"Fused Embedding dim: {fused_embedding_dim}")
+    print(f"Proprioception dim: {proprioception_dim}")
+    print(f"Latent State dim: {latent_state_dim}")
+    print(f"Action dim: {action_dim}")
+
+    # create model
+    print("=> creating model '{}'".format(args.model.embedding))
+    pvr_model, embedding_dim, transforms = load_pvr_model(args.model.embedding, None)
+    if args.dynamics == 'inverse':
+        model = InverseDynamicsModel(fused_embedding_dim, proprioception_dim, latent_state_dim, action_dim, pvr_model, args.model, fusion_preprocess, fusion_base)
+    elif args.dynamics == 'forward':
+        model = ForwardDynamicsModel(fused_embedding_dim, proprioception_dim, latent_state_dim, action_dim, pvr_model, args.model, fusion_preprocess, fusion_base)
+    else:
+        raise NotImplementedError("Dynamics must either be forward or inverse")
 
     # infer learning rate before changing batch size
     args.optim.lr = args.optim.lr * args.optim.batch_size / 256
@@ -142,21 +140,20 @@ def main_worker(gpu, ngpus_per_node, args):
     # optimizer setup
     assert args.optim.optimizer in ["lars", "adamw"]
     if args.optim.optimizer == "lars":
-        optimizer = moco.optimizer.LARS(
-            model.parameters(),
+        optimizer = LARS(
+            model.module.parameters(),
             args.optim.lr,
             weight_decay=args.optim.weight_decay,
             momentum=args.optim.momentum,
         )
     elif args.optim.optimizer == "adamw":
         optimizer = torch.optim.AdamW(
-            model.parameters(), args.optim.lr, weight_decay=args.optim.weight_decay
+            model.module.parameters(), 
+            args.optim.lr, 
+            weight_decay=args.optim.weight_decay
         )
 
     scaler = torch.cuda.amp.GradScaler()
-
-    # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().cuda(args.environment.gpu)
 
     # Load path
     if os.path.exists(args.environment.load_path):
@@ -167,8 +164,11 @@ def main_worker(gpu, ngpus_per_node, args):
             # Map model to be loaded to specified single gpu.
             loc = "cuda:{}".format(args.environment.gpu)
             checkpoint = torch.load(args.environment.load_path, map_location=loc)
-        model.load_state_dict(checkpoint["state_dict"])
+        pvr_model.load_state_dict(checkpoint["state_dict"])
         print("=> loaded checkpoint '{}'".format(args.environment.load_path))
+
+    # start training with a frozen pvr
+    frozen = True
 
     # optionally resume from a checkpoint
     os.makedirs(os.path.join(args.logging.ckpt_dir, args.logging.name), exist_ok=True)
@@ -185,8 +185,10 @@ def main_worker(gpu, ngpus_per_node, args):
                     # Map model to be loaded to specified single gpu.
                     loc = "cuda:{}".format(args.environment.gpu)
                     checkpoint = torch.load(ckpt_fname.format(i), map_location=loc)
+                frozen = checkpoint["frozen"]
                 args.optim.start_epoch = checkpoint["epoch"]
                 model.load_state_dict(checkpoint["state_dict"])
+                pvr_model.load_state_dict(checkpoint["pvr_state_dict"])
                 optimizer.load_state_dict(checkpoint["optimizer"])
                 print(
                     "=> loaded checkpoint '{}' (epoch {})".format(
@@ -194,6 +196,9 @@ def main_worker(gpu, ngpus_per_node, args):
                     )
                 )
                 break
+
+    # decide if the pvr backbone needs to be frozen
+    model.module.frozen = frozen
 
     # Create logger
     logger = None
@@ -207,57 +212,6 @@ def main_worker(gpu, ngpus_per_node, args):
         )
 
     cudnn.benchmark = True
-
-    # Data loading code
-    trainfname = args.data.train_filelist
-    normalize = transforms.Normalize(
-        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-    )
-
-    # follow BYOL's augmentation recipe: https://arxiv.org/abs/2006.07733
-    augmentation1 = [
-        transforms.RandomResizedCrop(224, scale=(args.crop_min, 1.0)),
-        transforms.RandomApply(
-            [transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)], p=0.8  # not strengthened
-        ),
-        transforms.RandomGrayscale(p=0.2),
-        transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=1.0),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize,
-    ]
-
-    augmentation2 = [
-        transforms.RandomResizedCrop(224, scale=(args.crop_min, 1.0)),
-        transforms.RandomApply(
-            [transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)], p=0.8  # not strengthened
-        ),
-        transforms.RandomGrayscale(p=0.2),
-        transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.1),
-        transforms.RandomApply([moco.loader.Solarize()], p=0.2),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize,
-    ]
-
-    assert args.data.type in ["standard", "picklepaths"]
-    if args.data.type == "standard":
-        train_dataset = datasets.imagelistdataset.ImageListDataset(
-            trainfname,
-            base_transform1=augmentation1,
-            base_transform2=augmentation2,
-        )
-    elif args.data.type == "picklepaths":
-        train_dataset = datasets.pickle_path_dataset.PicklePathsDataset(
-            root_dir=trainfname,
-            frameskip=args.data.frameskip,
-            transforms=[
-                transforms.Compose(augmentation1),
-                transforms.Compose(augmentation2),
-            ],
-        )
-    else:
-        raise NotImplementedError
 
     if args.environment.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -283,7 +237,15 @@ def main_worker(gpu, ngpus_per_node, args):
         # adjust_learning_rate(optimizer, epoch, args)
         print("Train Epoch {}".format(epoch))
 
-        # train(train_loader, model, criterion, optimizer, epoch, args, logger=logger)
+        if frozen and epoch >= args.optim.start_finetune:
+            model.module.frozen = False
+            frozen = False
+            if args.optim.refresh_optimizer:
+                optimizer.__setstate__({'state': defaultdict(dict)})
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = args.optim.refresh_lr
+            print("Beginning fine-tuning")
+
         train(train_loader, model, optimizer, scaler, logger, epoch, args)
 
         if not args.environment.multiprocessing_distributed or (
@@ -292,8 +254,10 @@ def main_worker(gpu, ngpus_per_node, args):
             save_checkpoint(
                 {
                     "epoch": epoch + 1,
-                    "arch": args.model.arch,
+                    "frozen": frozen,
+                    "arch": args.model.embedding,
                     "state_dict": model.state_dict(),
+                    "pvr_state_dict": model.module.pvr_model.state_dict(),
                     "optimizer": optimizer.state_dict(),
                 },
                 is_best=False,
@@ -316,12 +280,11 @@ def train(train_loader, model, optimizer, scaler, logger, epoch, args):
     batch_time = AverageMeter("Time", ":6.3f")
     data_time = AverageMeter("Data", ":6.3f")
     learning_rates = AverageMeter("LR", ":.4e")
-    losses = AverageMeter("Loss", ":.4e")
-    top1 = AverageMeter("Acc@1", ":6.2f")
-    top5 = AverageMeter("Acc@5", ":6.2f")
+    dynamics_losses = AverageMeter("Model Loss", ":.4e")
+    embedding_losses = AverageMeter("Embedding Loss", ":.4e")
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, learning_rates, losses, top1, top5],
+        [batch_time, data_time, learning_rates, dynamics_losses, embedding_losses],
         prefix="Epoch: [{}]".format(epoch),
         logger=logger,
     )
@@ -331,33 +294,34 @@ def train(train_loader, model, optimizer, scaler, logger, epoch, args):
 
     end = time.time()
     iters_per_epoch = len(train_loader)
-    moco_m = args.model.moco_m
 
     for batch_i, data in enumerate(train_loader):
         # measure data loading time
-        images = [data["input1"], data["input2"]]
+        *obs_window, embeddings, curr_prop, next_prop, action = data
         data_time.update(time.time() - end)
 
         # adjust learning rate and momentum coefficient per iteration
-        lr = adjust_learning_rate(optimizer, epoch + batch_i / iters_per_epoch, args)
-        learning_rates.update(lr)
-        if args.model.moco_m_cos:
-            moco_m = adjust_moco_momentum(epoch + batch_i / iters_per_epoch, args)
+        #lr = adjust_learning_rate(optimizer, epoch + batch_i / iters_per_epoch, args)
+        #learning_rates.update(lr)
 
         if args.environment.gpu is not None:
-            images[0] = images[0].cuda(args.environment.gpu, non_blocking=True)
-            images[1] = images[1].cuda(args.environment.gpu, non_blocking=True)
+            obs_window = list(obs_window)
+            for j in range(len(obs_window)):
+                obs_window[j] = obs_window[j].cuda(args.environment.gpu, non_blocking=True)
+            embeddings = embeddings.detach().cuda(args.environment.gpu, non_blocking=True)
+            curr_prop = curr_prop.cuda(args.environment.gpu, non_blocking=True)
+            next_prop = next_prop.cuda(args.environment.gpu, non_blocking=True)
+            action = action.cuda(args.environment.gpu, non_blocking=True)
 
         # compute output
         with torch.cuda.amp.autocast(True):
-            loss, acc1, acc5 = model(images[0], images[1], moco_m)
-        losses.update(loss.item(), images[0].size(0))
-        top1.update(acc1, images[0].size(0))
-        top5.update(acc5, images[0].size(0))
+            dynamics_loss, embedding_loss = model(obs_window, embeddings, curr_prop, next_prop, action)
+        dynamics_losses.update(dynamics_loss.item(), action.size(0))
+        embedding_losses.update(embedding_loss.item(), action.size(0))
 
         # compute gradient and take step
         optimizer.zero_grad()
-        scaler.scale(loss).backward()
+        scaler.scale(dynamics_loss).backward()
         scaler.step(optimizer)
         scaler.update()
 
@@ -402,14 +366,6 @@ def adjust_learning_rate(optimizer, epoch, args):
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
     return lr
-
-
-def adjust_moco_momentum(epoch, args):
-    """Adjust moco momentum based on current epoch"""
-    m = 1.0 - 0.5 * (1.0 + math.cos(math.pi * epoch / args.optim.epochs)) * (
-        1.0 - args.model.moco_m
-    )
-    return m
 
 
 class AverageMeter(object):

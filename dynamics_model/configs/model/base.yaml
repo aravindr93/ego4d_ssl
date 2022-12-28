@@ -1,0 +1,10 @@
+embedding: ???
+
+sync_bn: True
+freeze_bn: True
+hidden_sizes: (256, 256)
+state_model_proj: 256
+activation: 'relu'
+batchnorm: False
+dropout: 0
+
