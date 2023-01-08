@@ -2,12 +2,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import builtins
 import math
-import random
 import os
 import time
 import sys
 import shutil
 import pickle
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -45,6 +45,41 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
     if args.environment.gpu is not None:
         print("Use GPU: {} for training".format(args.environment.gpu))
 
+    # load the pvr backbone with default weights
+    print("=> creating model '{}'".format(args.model.embedding))
+    pvr_model, embedding_dim, transforms = load_pvr_model(args.model.embedding, None)
+
+    # load separate weights for the pvr backbone if needed
+    if os.path.exists(args.environment.load_path):
+        print("=> loading checkpoint '{}'".format(args.environment.load_path))
+        if args.environment.gpu == "":
+            checkpoint = torch.load(args.environment.load_path)
+        else:
+            # Map model to be loaded to specified single gpu.
+            loc = "cuda:{}".format(args.environment.gpu)
+            checkpoint = torch.load(args.environment.load_path, map_location=loc)
+        pvr_model.load_state_dict(checkpoint["state_dict"])
+        print("=> loaded {} model from '{}'".format(args.model.embedding, args.environment.load_path))
+
+    # prepare the training dataset
+    train_dataset = FrameDataset(pvr_model, embedding_dim, transforms, args.data, "cuda:{}".format(args.environment.gpu))
+
+    # prepare fusion functions for combining embeddings across multiple views and timesteps (for partial observability)
+    fusion_preprocess = fuse_preprocess[args.data.fuse_embeddings]
+    fusion_base = fuse_base[args.data.fuse_embeddings]
+    fusion_base = fusion_base(embedding_dim, args.data.history_window, num_views=len(args.data.suite.img_keys))
+    fused_embedding_dim = fusion_base.latent_dim
+
+    # summarize all dimensions
+    action_dim = train_dataset.action_dim
+    proprioception_dim = train_dataset.proprioception_dim
+    latent_state_dim = args.data.latent_state_dim
+    print(f"Representation Embedding dim: {embedding_dim}")
+    print(f"Fused Embedding dim: {fused_embedding_dim}")
+    print(f"Proprioception dim: {proprioception_dim}")
+    print(f"Latent State dim: {latent_state_dim}")
+    print(f"Action dim: {action_dim}")
+
     if args.environment.distributed:
         if args.environment.dist_url == "env://" and args.environment.rank == -1:
             args.environment.rank = int(os.environ["RANK"])
@@ -60,39 +95,7 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
         )
         torch.distributed.barrier()
 
-    if isinstance(args.data.envs, str):
-        args.data.envs = [args.data.envs]
-    paths = []
-    for env in args.data.envs:
-        env_id = args.data.suite.prefix + env + args.data.suite.suffix
-        paths_loc = args.data.data_dir + args.data.suite.name + "/" + env_id + ".pickle"
-        try:
-            paths.extend(pickle.load(open(paths_loc, 'rb')))
-        except:
-            print("Unable to load the data. Check the data path.")
-            print(paths_loc)
-            quit()
-    train_dataset = FrameDataset(model, embedding_dim, transforms, paths, args.data, "cuda:{}".format(args.environment.gpu))
-
-    # prepare fusion functions for combining embeddings across multiple views or history window
-    fusion_preprocess = fuse_preprocess[args.data.fuse_embeddings]
-    fusion_base = fuse_base[args.data.fuse_embeddings]
-    fusion_base = fusion_base(embedding_dim, args.data.history_window, num_views=len(args.data.suite.img_keys))
-    fused_embedding_dim = fusion_base.latent_dim
-
-    # construct the behavior cloning policy
-    action_dim = paths[0]['actions'].shape[-1]
-    proprioception_dim = train_dataset.proprioception_dim
-    latent_state_dim = args.data.latent_state_dim
-    print(f"Representation Embedding dim: {embedding_dim}")
-    print(f"Fused Embedding dim: {fused_embedding_dim}")
-    print(f"Proprioception dim: {proprioception_dim}")
-    print(f"Latent State dim: {latent_state_dim}")
-    print(f"Action dim: {action_dim}")
-
-    # create model
-    print("=> creating model '{}'".format(args.model.embedding))
-    pvr_model, embedding_dim, transforms = load_pvr_model(args.model.embedding, None)
+    # create dynamics model
     if args.dynamics == 'inverse':
         model = InverseDynamicsModel(fused_embedding_dim, proprioception_dim, latent_state_dim, action_dim, pvr_model, args.model, fusion_preprocess, fusion_base)
     elif args.dynamics == 'forward':
@@ -123,7 +126,7 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
                 (args.environment.workers + ngpus_per_node - 1) / ngpus_per_node
             )
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[args.environment.gpu]
+                model, device_ids=[args.environment.gpu],
             )
         else:
             model.cuda()
@@ -154,18 +157,6 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
         )
 
     scaler = torch.cuda.amp.GradScaler()
-
-    # Load path
-    if os.path.exists(args.environment.load_path):
-        print("=> loading checkpoint '{}'".format(args.environment.load_path))
-        if args.environment.gpu == "":
-            checkpoint = torch.load(args.environment.load_path)
-        else:
-            # Map model to be loaded to specified single gpu.
-            loc = "cuda:{}".format(args.environment.gpu)
-            checkpoint = torch.load(args.environment.load_path, map_location=loc)
-        pvr_model.load_state_dict(checkpoint["state_dict"])
-        print("=> loaded checkpoint '{}'".format(args.environment.load_path))
 
     # start training with a frozen pvr
     frozen = True
@@ -276,15 +267,22 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
         logger.run.finish()
 
 
-def train(train_loader, model, optimizer, scaler, logger, epoch, args):
+def train(
+    train_loader: torch.utils.data.DataLoader, 
+    model: nn.parallel.DistributedDataParallel, 
+    optimizer: torch.optim.Optimizer, 
+    scaler: torch.cuda.amp.GradScaler, 
+    logger: DataLog, 
+    epoch: int, 
+    args: DictConfig
+) -> None:
     batch_time = AverageMeter("Time", ":6.3f")
     data_time = AverageMeter("Data", ":6.3f")
-    learning_rates = AverageMeter("LR", ":.4e")
     dynamics_losses = AverageMeter("Model Loss", ":.4e")
     embedding_losses = AverageMeter("Embedding Loss", ":.4e")
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, learning_rates, dynamics_losses, embedding_losses],
+        [batch_time, data_time, dynamics_losses, embedding_losses],
         prefix="Epoch: [{}]".format(epoch),
         logger=logger,
     )
@@ -299,10 +297,6 @@ def train(train_loader, model, optimizer, scaler, logger, epoch, args):
         # measure data loading time
         *obs_window, embeddings, curr_prop, next_prop, action = data
         data_time.update(time.time() - end)
-
-        # adjust learning rate and momentum coefficient per iteration
-        #lr = adjust_learning_rate(optimizer, epoch + batch_i / iters_per_epoch, args)
-        #learning_rates.update(lr)
 
         if args.environment.gpu is not None:
             obs_window = list(obs_window)
@@ -342,30 +336,6 @@ def save_checkpoint(state, is_best, filename="checkpoint.pth.tar"):
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, "model_best.pth.tar")
-
-
-def adjust_learning_rate(optimizer, epoch, args):
-    """Decays the learning rate with half-cycle cosine after warmup"""
-    if epoch == 0:
-        lr = args.optim.lr
-    elif epoch < args.optim.warmup_epochs:
-        lr = args.optim.lr * epoch / args.optim.warmup_epochs
-    else:
-        lr = (
-            args.optim.lr
-            * 0.5
-            * (
-                1.0
-                + math.cos(
-                    math.pi
-                    * (epoch - args.optim.warmup_epochs)
-                    / (args.optim.epochs - args.optim.warmup_epochs)
-                )
-            )
-        )
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = lr
-    return lr
 
 
 class AverageMeter(object):

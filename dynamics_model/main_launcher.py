@@ -10,7 +10,6 @@ from pathlib import Path
 import warnings
 import random
 import os
-import numpy as np
 
 os.environ["MKL_THREADING_LAYER"] = "GNU"
 os.environ["MKL_SERVICE_FORCE_INTEL"] = "1"
@@ -90,7 +89,6 @@ class Worker:
             args.environment.dist_url = (
                 f"tcp://{args.environment.node}:{args.environment.port}"
             )
-        print("Using url {}".format(args.environment.dist_url))
 
         print("Using url {}".format(args.environment.dist_url))
 
@@ -174,7 +172,8 @@ def main(args):
     update_pythonpath_relative_hydra()
     args.logging.ckpt_dir = hydra_utils.to_absolute_path(args.logging.ckpt_dir)
     args.logging.tb_dir = hydra_utils.to_absolute_path(args.logging.tb_dir)
-    args.data.data_dir = hydra_utils.to_absolute_path(args.data.data_dir)
+    args.data.pickle_dir = hydra_utils.to_absolute_path(args.data.pickle_dir)
+    args.data.frames_dir = hydra_utils.to_absolute_path(args.data.frames_dir)
 
     # If job is running, ignore
     jobdets = load_jobs()

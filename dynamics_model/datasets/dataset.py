@@ -1,4 +1,5 @@
 from omegaconf import DictConfig
+from PIL import Image
 from typing import Any, Union, Callable
 from tqdm import tqdm
 from torch.utils.data import Dataset
@@ -8,8 +9,10 @@ import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 import random
 import numpy as np
+import os
 import gc
 import bisect
+import pickle
 
 def compute_embeddings(
     processed_images: torch.Tensor, 
@@ -156,13 +159,35 @@ class FrameDataset(Dataset):
         model: nn.Module, 
         embedding_dim: int, 
         transforms: Callable[[Union[np.ndarray, torch.Tensor]], torch.Tensor],
-        paths: list[dict[str, Any]],
         args: DictConfig,
         device: str
     ) -> None:
-        self.paths = paths
-        self.paths = compute_embeddings_from_paths(self.paths, args.suite.img_keys, model, embedding_dim, transforms, device, keep_images=len(self.paths))
-
+        self.paths = []
+        self.frame_buffer = []
+        self.action_dim = 0
+        pickle_root = os.path.join(args.pickle_dir, args.suite.name)
+        frames_root = os.path.join(args.frames_dir, args.suite.name)
+        for env in args.envs:
+            env_id = args.suite.prefix + env + args.suite.suffix
+            pickle_loc = os.path.join(pickle_root, env_id + ".pickle")
+            frames_dir = os.path.join(frames_root, env_id)
+            try:
+                paths = pickle.load(open(pickle_loc, 'rb'))
+            except:
+                print("Unable to load the data. Check the data path.")
+                print(pickle_loc)
+                quit()
+            paths = compute_embeddings_from_paths(paths, args.suite.img_keys, model, embedding_dim, transforms, device, keep_images=0)
+            self.paths.extend(paths)
+            self.action_dim = max(self.action_dim, paths[0]['actions'].shape[-1])
+            for traj, path in enumerate(paths):
+                traj_subdir = os.path.join(frames_dir, f"traj_{str(traj + 1)}")
+                self.frame_buffer.append([])
+                for frame_idx in range(len(path['latent_states'])):
+                    self.frame_buffer[-1].append(os.path.join(traj_subdir, f"frame_{frame_idx}.jpg"))
+        for path in self.paths:
+            path['actions'] = np.pad(path['actions'], ((0, 0), (0, self.action_dim - path['actions'].shape[-1])), constant_values=0)
+        
         self.total_timesteps = sum([len(path['actions']) - 1 for path in self.paths])
         self.timestep_cumsum = np.cumsum([len(path['actions']) - 1 for path in self.paths])
         self.history_window = args.history_window
@@ -191,7 +216,7 @@ class FrameDataset(Dataset):
     def retrieve_frames(self, path_index: int, timestep: int) -> list[tuple[torch.Tensor]]:
         frames, embeddings = [], []
         for k in range(self.history_window - 1, -2, -1):
-            frames.append(self.to_tensor(self.paths[path_index][self.img_keys[0]][max(timestep - k, 0)]))
+            frames.append(self.to_tensor(Image.open(self.frame_buffer[path_index][max(timestep - k, 0)])))
             embeddings.append(self.paths[path_index]['latent_states'][max(timestep - k, 0)])
         if self.augmentations:
             aug1 = random.choice(AUGMENTATIONS_LIST)

@@ -1,0 +1,126 @@
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    cli_version: 0.13.5
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    python_version: 3.9.13
+    start_time: 1673091089.899603
+    t:
+      1:
+      - 1
+      - 41
+      - 49
+      - 50
+      - 51
+      - 55
+      - 63
+      2:
+      - 1
+      - 41
+      - 49
+      - 50
+      - 51
+      - 55
+      - 63
+      3:
+      - 16
+      - 23
+      4: 3.9.13
+      5: 0.13.5
+      8:
+      - 5
+      - 9
+data:
+  desc: null
+  value:
+    augmentations: false
+    envs:
+    - walker_walk
+    - walker_stand
+    - cheetah_run
+    - finger_spin
+    - reacher_easy
+    frames_dir: /shared/aryanjain/data/expert_data
+    fuse_embeddings: flare
+    history_window: 3
+    latent_state_dim: 256
+    num_demos: 100
+    pickle_dir: /home/aryanjain/data/expert_data
+    suite:
+      img_keys:
+      - images
+      name: DMC
+      prefix: dmc_
+      prop_key: false
+      suffix: -v1
+dynamics:
+  desc: null
+  value: inverse
+environment:
+  desc: null
+  value:
+    dist_backend: nccl
+    dist_url: tcp://localhost:21992
+    distributed: true
+    evaluate: false
+    gpu: 0
+    load_path: ''
+    multiprocessing_distributed: true
+    ngpu: 1
+    node: localhost
+    port: 21992
+    print_freq: 10
+    rank: 0
+    resume: true
+    seed: null
+    slurm: false
+    slurm_partition: learnfair
+    slurm_timeout: 600
+    visualize: false
+    workers: 32
+    world_size: 1
+logging:
+  desc: null
+  value:
+    ckpt_dir: /home/aryanjain/dynamics_model/inverse_dynamics_dmc/checkpoints
+    eval_freq: 5
+    log_tb: true
+    name: inverse_dynamics_dmc
+    print_freq: 10
+    result_dir: /home/aryanjain/dynamics_model/inverse_dynamics_dmc/results/
+    save_freq: 5
+    submitit_dir: /home/aryanjain/dynamics_model/inverse_dynamics_dmc/submitit_train_logs/
+    suffix: ''
+    tb_dir: /home/aryanjain/dynamics_model/inverse_dynamics_dmc/tblogs
+    visualize: false
+    wandb_project: inverse_dynamics_adapt_rep
+    wandb_user: aryan9101
+model:
+  desc: null
+  value:
+    activation: relu
+    batchnorm: false
+    dropout: 0
+    embedding: moco
+    freeze_bn: false
+    hidden_sizes: (256, 256)
+    state_model_proj: 256
+    sync_bn: true
+optim:
+  desc: null
+  value:
+    batch_size: 16
+    epochs: 150
+    lr: 9.375e-06
+    momentum: 0.9
+    optimizer: adamw
+    refresh_lr: 1.0e-05
+    refresh_optimizer: false
+    start_epoch: 0
+    start_finetune: 0
+    warmup_epochs: 40
+    weight_decay: 0.1

@@ -1,0 +1,77 @@
+dynamics: inverse
+data:
+  suite:
+    name: DMC
+    prefix: dmc_
+    suffix: -v1
+    img_keys:
+    - images
+    prop_key: false
+  pickle_dir: /home/aryanjain/data/expert_data/
+  frames_dir: /shared/aryanjain/data/expert_data/
+  num_demos: 100
+  augmentations: false
+  envs:
+  - walker_walk
+  - walker_stand
+  - cheetah_run
+  - finger_spin
+  - reacher_easy
+  fuse_embeddings: flare
+  history_window: 3
+  latent_state_dim: 256
+environment:
+  visualize: false
+  resume: true
+  world_size: 1
+  rank: 0
+  workers: 32
+  multiprocessing_distributed: true
+  distributed: None
+  dist_backend: nccl
+  dist_url: tcp://224.66.41.62:23456
+  node: localhost
+  port: 21992
+  seed: 0
+  gpu: ''
+  ngpu: 1
+  slurm: false
+  slurm_partition: learnfair
+  slurm_timeout: 600
+  print_freq: ${logging.print_freq}
+  evaluate: false
+  load_path: ''
+logging:
+  print_freq: 10
+  save_freq: 5
+  name: inverse_dynamics_dmc_2
+  log_tb: true
+  wandb_user: aryan9101
+  wandb_project: inverse_dynamics_adapt_rep
+  ckpt_dir: /home/aryanjain/dynamics_model/${logging.name}/checkpoints/
+  tb_dir: /home/aryanjain/dynamics_model/${logging.name}/tblogs/
+  submitit_dir: /home/aryanjain/dynamics_model/${logging.name}/submitit_train_logs/
+  result_dir: /home/aryanjain/dynamics_model/${logging.name}/results/
+  eval_freq: 5
+  suffix: ''
+  visualize: false
+model:
+  embedding: moco
+  sync_bn: true
+  freeze_bn: false
+  hidden_sizes: (256, 256)
+  state_model_proj: 256
+  activation: relu
+  batchnorm: false
+  dropout: 0
+optim:
+  optimizer: adamw
+  lr: 0.00015
+  weight_decay: 0.1
+  momentum: 0.9
+  batch_size: 16
+  epochs: 100
+  start_finetune: 20
+  start_epoch: 0
+  refresh_optimizer: false
+  refresh_lr: 1.0e-05
