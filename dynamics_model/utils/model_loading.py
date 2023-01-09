@@ -1,3 +1,5 @@
+from __future__ import annotations
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,9 +9,14 @@ import torchvision.transforms as T
 import os
 import sys
 import importlib
+from functools import partial, reduce
+from operator import mul
+
 from typing import Union, Callable
 from torchvision.transforms import InterpolationMode
 from torch.nn.modules.linear import Identity
+from timm.models.vision_transformer import VisionTransformer, _cfg
+from timm.models.layers import PatchEmbed
 from r3m import load_r3m
 import clip
 sys.path.append(os.environ['MAE_PATH'])
@@ -48,13 +55,8 @@ MODEL_LIST = [
     'resnet50', 'resnet50_rand', 
     'clip_vit', 'clip_rn50',
     'mae-B', 'mae-L', 'mae-H',
-    'moco', 
+    'moco', 'moco_vit',
     'moco_conv5', 'moco_conv4', 'moco_conv3',
-    'moco_croponly_conv5', 'moco_croponly_conv4', 'moco_croponly_conv3',
-    'fuse_moco_34', 'fuse_moco_35', 'fuse_moco_45', 'fuse_moco_345',
-    'fuse_moco_croponly_34', 'fuse_moco_croponly_35', 'fuse_moco_croponly_45', 'fuse_moco_croponly_345',
-    'moco_adroit', 'moco_kitchen', 'moco_dmc',
-    'moco_ego4d_100k', 'moco_ego4d_5m',
     'r3m', 'mvp'
 ]
 
@@ -126,89 +128,14 @@ def load_pvr_model(
     elif embedding_name == 'moco_conv4':
         model, embedding_dim = moco_conv4_compression_model(CHECKPOINT_DIR + '/moco_v2_conv4.pth.tar')
         transforms = _resnet_transforms
-    elif embedding_name == 'moco_conv5' or embedding_name == 'moco':
+    elif embedding_name == 'moco_conv5':
         model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_v2_800ep_pretrain.pth.tar')
         transforms = _resnet_transforms
-    # ============================================================
-    # MoCo (croponly)
-    # ============================================================
-    elif embedding_name == 'moco_croponly_conv3':
-        model, embedding_dim = moco_conv3_compression_model(CHECKPOINT_DIR + '/moco_croponly_conv3.pth')
+    elif embedding_name == 'moco':
+        model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_v2_800ep_pretrain.pth.tar')
         transforms = _resnet_transforms
-    elif embedding_name == 'moco_croponly_conv4':
-        model, embedding_dim = moco_conv4_compression_model(CHECKPOINT_DIR + '/moco_croponly_conv4.pth')
-        transforms = _resnet_transforms
-    elif embedding_name == 'moco_croponly_conv5':
-        model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_croponly.pth')
-        transforms = _resnet_transforms
-    # ============================================================
-    # MoCo (Aug+) multi-layer
-    # ============================================================
-    elif embedding_name == 'fuse_moco_34':
-        m3, e3, t3 = load_pvr_model('moco_conv3', seed)
-        m4, e4, t4 = load_pvr_model('moco_conv4', seed)
-        model = CombinedModel([m3, m4])
-        embedding_dim, transforms = e3+e4, _resnet_transforms
-    elif embedding_name == 'fuse_moco_35':
-        m3, e3, t3 = load_pvr_model('moco_conv3', seed)
-        m5, e5, t5 = load_pvr_model('moco_conv5', seed)
-        model = CombinedModel([m3, m5])
-        embedding_dim, transforms = e3+e5, _resnet_transforms
-    elif embedding_name == 'fuse_moco_45':
-        m4, e4, t4 = load_pvr_model('moco_conv4', seed)
-        m5, e5, t5 = load_pvr_model('moco_conv5', seed)
-        model = CombinedModel([m4, m5])
-        embedding_dim, transforms = e4+e5, _resnet_transforms
-    elif embedding_name == 'fuse_moco_345':
-        m3, e3, t3 = load_pvr_model('moco_conv3', seed)
-        m4, e4, t4 = load_pvr_model('moco_conv4', seed)
-        m5, e5, t5 = load_pvr_model('moco_conv5', seed)
-        model = CombinedModel([m3, m4, m5])
-        embedding_dim, transforms = e3+e4+e5, _resnet_transforms
-    # ============================================================
-    # MoCo (croponly) multi-layer
-    # ============================================================
-    elif embedding_name == 'fuse_moco_croponly_34':
-        m3, e3, t3 = load_pvr_model('moco_croponly_conv3', seed)
-        m4, e4, t4 = load_pvr_model('moco_croponly_conv4', seed)
-        model = CombinedModel([m3, m4])
-        embedding_dim, transforms = e3+e4, _resnet_transforms
-    elif embedding_name == 'fuse_moco_croponly_35':
-        m3, e3, t3 = load_pvr_model('moco_croponly_conv3', seed)
-        m5, e5, t5 = load_pvr_model('moco_croponly_conv5', seed)
-        model = CombinedModel([m3, m5])
-        embedding_dim, transforms = e3+e5, _resnet_transforms
-    elif embedding_name == 'fuse_moco_croponly_45':
-        m4, e4, t4 = load_pvr_model('moco_croponly_conv4', seed)
-        m5, e5, t5 = load_pvr_model('moco_croponly_conv5', seed)
-        model = CombinedModel([m4, m5])
-        embedding_dim, transforms = e4+e5, _resnet_transforms
-    elif embedding_name == 'fuse_moco_croponly_345':
-        m3, e3, t3 = load_pvr_model('moco_croponly_conv3', seed)
-        m4, e4, t4 = load_pvr_model('moco_croponly_conv4', seed)
-        m5, e5, t5 = load_pvr_model('moco_croponly_conv5', seed)
-        model = CombinedModel([m3, m4, m5])
-        embedding_dim, transforms = e3+e4+e5, _resnet_transforms
-    # ============================================================
-    # MoCo (aug+) trained on mujoco datasets
-    # ============================================================
-    elif embedding_name == 'moco_adroit':
-        model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_adroit.pth')
-        transforms = _resnet_transforms
-    elif embedding_name == 'moco_kitchen':
-        model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_kitchen.pth')
-        transforms = _resnet_transforms
-    elif embedding_name == 'moco_dmc':
-        model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_dmc.pth')
-        transforms = _resnet_transforms
-    # ============================================================
-    # Ego4D models
-    # ============================================================
-    elif embedding_name == 'moco_ego4d_100k':
-        model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_ego4d_100k.pth')
-        transforms = _resnet_transforms
-    elif embedding_name == 'moco_ego4d_5m':
-        model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_ego4d_5m.pth')
+    elif embedding_name == 'moco_vit':
+        model, embedding_dim = moco_vit_model(CHECKPOINT_DIR + 'vit-b-300ep.pth.tar')
         transforms = _resnet_transforms
     # ============================================================
     # PVRs for Robotics Manipulation
@@ -338,6 +265,98 @@ def moco_conv3_compression_model(checkpoint_path: str) -> tuple[nn.Module, int]:
     assert len(msg.missing_keys)==0
     # manually computed the embedding dimension to be 2156
     return model, 2156
+
+
+class VisionTransformerMoCo(VisionTransformer):
+    def __init__(self, stop_grad_conv1=True, **kwargs):
+        super().__init__(**kwargs)
+        # Use fixed 2D sin-cos position embedding
+        self.num_tokens = 1
+        self.build_2d_sincos_position_embedding()
+
+        # weight initialization
+        for name, m in self.named_modules():
+            if isinstance(m, nn.Linear):
+                if "qkv" in name:
+                    # treat the weights of Q, K, V separately
+                    val = math.sqrt(
+                        6.0 / float(m.weight.shape[0] // 3 + m.weight.shape[1])
+                    )
+                    nn.init.uniform_(m.weight, -val, val)
+                else:
+                    nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.bias)
+        nn.init.normal_(self.cls_token, std=1e-6)
+
+        if isinstance(self.patch_embed, PatchEmbed):
+            # xavier_uniform initialization
+            val = math.sqrt(
+                6.0
+                / float(
+                    3 * reduce(mul, self.patch_embed.patch_size, 1) + self.embed_dim
+                )
+            )
+            nn.init.uniform_(self.patch_embed.proj.weight, -val, val)
+            nn.init.zeros_(self.patch_embed.proj.bias)
+
+            if stop_grad_conv1:
+                self.patch_embed.proj.weight.requires_grad = False
+                self.patch_embed.proj.bias.requires_grad = False
+
+    def build_2d_sincos_position_embedding(self, temperature=10000.0):
+        h, w = self.patch_embed.grid_size
+        grid_w = torch.arange(w, dtype=torch.float32)
+        grid_h = torch.arange(h, dtype=torch.float32)
+        grid_w, grid_h = torch.meshgrid(grid_w, grid_h)
+        assert (
+            self.embed_dim % 4 == 0
+        ), "Embed dimension must be divisible by 4 for 2D sin-cos position embedding"
+        pos_dim = self.embed_dim // 4
+        omega = torch.arange(pos_dim, dtype=torch.float32) / pos_dim
+        omega = 1.0 / (temperature**omega)
+        out_w = torch.einsum("m,d->md", [grid_w.flatten(), omega])
+        out_h = torch.einsum("m,d->md", [grid_h.flatten(), omega])
+        pos_emb = torch.cat(
+            [torch.sin(out_w), torch.cos(out_w), torch.sin(out_h), torch.cos(out_h)],
+            dim=1,
+        )[None, :, :]
+
+        assert self.num_tokens == 1, "Assuming one and only one token, [cls]"
+        pe_token = torch.zeros([1, 1, self.embed_dim], dtype=torch.float32)
+        self.pos_embed = nn.Parameter(torch.cat([pe_token, pos_emb], dim=1))
+        self.pos_embed.requires_grad = False
+
+
+def moco_vit_model(checkpoint_path: str) -> tuple[nn.Module, int]:
+    model = VisionTransformerMoCo(
+        patch_size=16,
+        num_classes=4096,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+    )
+    model.default_cfg = _cfg()
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cpu"))
+    old_state_dict = checkpoint["state_dict"]
+    state_dict = {}
+    for k in list(old_state_dict.keys()):
+        # retain only base_encoder up to before the embedding layer
+        if k.startswith("module.base_encoder") and not (
+            k.startswith("module.base_encoder.head")
+            or k.startswith("module.base_encoder.fc")
+        ):
+            # remove prefix
+            updated_key = k[len("module.base_encoder.") :]
+            state_dict[updated_key] = old_state_dict[k]
+        # delete renamed or unused k
+        del old_state_dict[k]
+    msg = model.load_state_dict(state_dict, strict=False)
+    assert set(msg.missing_keys) == {"head.bias", "head.weight"} 
+    model.head = Identity()
+    return model, model.embed_dim
 
 
 def small_cnn(in_channels: int = 3) -> nn.Module:

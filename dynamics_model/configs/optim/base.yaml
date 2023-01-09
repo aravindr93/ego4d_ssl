@@ -1,14 +1,10 @@
 optimizer: 'adamw'
 
-lr: 1.5e-4
+lr: 1.0e-4
 # learning rate is scaled to lr * batch_size / 256
-weight_decay: 0.1
+weight_decay: 0.01
 momentum: 0.9
-batch_size: 32
+batch_size: 128
 
 epochs: 100
-start_finetune: 0
 start_epoch: 0
-
-refresh_optimizer: False
-refresh_lr: 1.0e-5

@@ -114,7 +114,6 @@ class InverseDynamicsModel(nn.Module):
         self.fusion_preprocess = fusion_preprocess
         self.fusion_base = fusion_base
 
-        self.frozen = True
         self.freeze_bn = args.freeze_bn
 
     def forward(
@@ -126,9 +125,8 @@ class InverseDynamicsModel(nn.Module):
         action: torch.Tensor
     ):
         embeddings = []
-        with torch.set_grad_enabled(not self.frozen):
-            for frame_batch in observation_window:
-                embeddings.append(self.pvr_model(frame_batch).unsqueeze(dim=1))
+        for frame_batch in observation_window:
+            embeddings.append(self.pvr_model(frame_batch).unsqueeze(dim=1))
         curr_observation = self.fusion_preprocess(embeddings[:-1])
         next_observation = self.fusion_preprocess(embeddings[1:])
         curr_latent = self.state_model(self.fusion_base(curr_observation), curr_prop)
@@ -188,7 +186,6 @@ class ForwardDynamicsModel(nn.Module):
         self.fusion_preprocess = fusion_preprocess
         self.fusion_base = fusion_base
 
-        self.frozen = True
         self.freeze_bn = args.freeze_bn
 
     def forward(
@@ -200,9 +197,8 @@ class ForwardDynamicsModel(nn.Module):
         action: torch.Tensor
     ):
         embeddings = []
-        with torch.set_grad_enabled(not self.frozen):
-            for frame_batch in observation_window:
-                embeddings.append(self.pvr_model(frame_batch).unsqueeze(dim=1))
+        for frame_batch in observation_window:
+            embeddings.append(self.pvr_model(frame_batch).unsqueeze(dim=1))
         curr_observation = self.fusion_preprocess(embeddings[:-1])
         next_observation = self.fusion_preprocess(embeddings[1:])
         curr_latent = self.state_model(self.fusion_base(curr_observation), curr_prop)

@@ -61,6 +61,9 @@ class Worker:
         import torch.utils.data.distributed
         import torch.backends.cudnn as cudnn
 
+        from utils.model_loading import load_pvr_model
+        from datasets.dataset import FrameDataset
+
         cudnn.benchmark = True
         args = copy.deepcopy(origargs)
         np.set_printoptions(precision=3)
@@ -102,6 +105,27 @@ class Worker:
                 "You may see unexpected behavior when restarting "
                 "from checkpoints."
             )
+
+        # load the pvr backbone with default weights
+        print("=> creating {} model with default pre-trained weights".format(args.model.embedding))
+        pvr_model, embedding_dim, transforms = load_pvr_model(args.model.embedding, None)
+
+        # load separate weights for the pvr backbone if needed
+        if os.path.exists(args.environment.load_path):
+            print("=> loading checkpoint '{}'".format(args.environment.load_path))
+            if args.environment.gpu == "":
+                checkpoint = torch.load(args.environment.load_path)
+            else:
+                # Map model to be loaded to specified single gpu.
+                loc = "cuda:{}".format(args.environment.gpu)
+                checkpoint = torch.load(args.environment.load_path, map_location=loc)
+            pvr_model.load_state_dict(checkpoint["state_dict"])
+            print("=> loaded {} model from '{}'".format(args.model.embedding, args.environment.load_path))
+
+        # prepare the training dataset
+        train_dataset = FrameDataset(pvr_model, embedding_dim, transforms, args.data, "cuda")
+        print("Dataset ready for fine-tuning")
+
         if args.environment.gpu != "":
             warnings.warn(
                 "You have chosen a specific GPU. This will completely "
@@ -122,10 +146,10 @@ class Worker:
             args.environment.world_size = ngpus_per_node * args.environment.world_size
             # Use torch.multiprocessing.spawn to launch distributed processes: the
             # main_worker process function
-            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, train_dataset))
         else:
             # Simply call main_worker function
-            main_worker(args.environment.gpu, ngpus_per_node, args)
+            main_worker(args.environment.gpu, ngpus_per_node, args, train_dataset)
 
     def checkpoint(self, *args, **kwargs) -> submitit.helpers.DelayedSubmission:
         return submitit.helpers.DelayedSubmission(

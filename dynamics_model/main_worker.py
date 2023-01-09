@@ -1,13 +1,10 @@
 #!/usr/bin/env python
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import builtins
-import math
 import os
 import time
 import sys
 import shutil
-import pickle
-import numpy as np
 
 import torch
 import torch.nn as nn
@@ -23,13 +20,10 @@ from utils.fusion import fuse_preprocess, fuse_base
 from utils.model_loading import load_pvr_model
 from utils.models import InverseDynamicsModel, ForwardDynamicsModel
 from utils.optimizer import LARS
-from datasets.dataset import FrameDataset
-from collections import defaultdict
 
 from omegaconf import DictConfig, OmegaConf
-from functools import partial
 
-def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
+def main_worker(gpu, ngpus_per_node: int, args: DictConfig, train_dataset: torch.utils.data.Dataset):
     # args = OmegaConf.to_container(args, resolve=True, throw_on_missing=True)
     cudnn.benchmark = True
     args.environment.gpu = gpu
@@ -46,7 +40,7 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
         print("Use GPU: {} for training".format(args.environment.gpu))
 
     # load the pvr backbone with default weights
-    print("=> creating model '{}'".format(args.model.embedding))
+    print("=> creating {} model with default pre-trained weights".format(args.model.embedding))
     pvr_model, embedding_dim, transforms = load_pvr_model(args.model.embedding, None)
 
     # load separate weights for the pvr backbone if needed
@@ -60,9 +54,6 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
             checkpoint = torch.load(args.environment.load_path, map_location=loc)
         pvr_model.load_state_dict(checkpoint["state_dict"])
         print("=> loaded {} model from '{}'".format(args.model.embedding, args.environment.load_path))
-
-    # prepare the training dataset
-    train_dataset = FrameDataset(pvr_model, embedding_dim, transforms, args.data, "cuda:{}".format(args.environment.gpu))
 
     # prepare fusion functions for combining embeddings across multiple views and timesteps (for partial observability)
     fusion_preprocess = fuse_preprocess[args.data.fuse_embeddings]
@@ -158,9 +149,6 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
 
     scaler = torch.cuda.amp.GradScaler()
 
-    # start training with a frozen pvr
-    frozen = True
-
     # optionally resume from a checkpoint
     os.makedirs(os.path.join(args.logging.ckpt_dir, args.logging.name), exist_ok=True)
     ckpt_fname = os.path.join(
@@ -176,7 +164,6 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
                     # Map model to be loaded to specified single gpu.
                     loc = "cuda:{}".format(args.environment.gpu)
                     checkpoint = torch.load(ckpt_fname.format(i), map_location=loc)
-                frozen = checkpoint["frozen"]
                 args.optim.start_epoch = checkpoint["epoch"]
                 model.load_state_dict(checkpoint["state_dict"])
                 pvr_model.load_state_dict(checkpoint["pvr_state_dict"])
@@ -187,9 +174,6 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
                     )
                 )
                 break
-
-    # decide if the pvr backbone needs to be frozen
-    model.module.frozen = frozen
 
     # Create logger
     logger = None
@@ -228,15 +212,6 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
         # adjust_learning_rate(optimizer, epoch, args)
         print("Train Epoch {}".format(epoch))
 
-        if frozen and epoch >= args.optim.start_finetune:
-            model.module.frozen = False
-            frozen = False
-            if args.optim.refresh_optimizer:
-                optimizer.__setstate__({'state': defaultdict(dict)})
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = args.optim.refresh_lr
-            print("Beginning fine-tuning")
-
         train(train_loader, model, optimizer, scaler, logger, epoch, args)
 
         if not args.environment.multiprocessing_distributed or (
@@ -245,7 +220,6 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig):
             save_checkpoint(
                 {
                     "epoch": epoch + 1,
-                    "frozen": frozen,
                     "arch": args.model.embedding,
                     "state_dict": model.state_dict(),
                     "pvr_state_dict": model.module.pvr_model.state_dict(),
@@ -291,7 +265,6 @@ def train(
     model.train()
 
     end = time.time()
-    iters_per_epoch = len(train_loader)
 
     for batch_i, data in enumerate(train_loader):
         # measure data loading time
