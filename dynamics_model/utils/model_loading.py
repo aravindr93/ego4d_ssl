@@ -3,7 +3,6 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torchvision.models as models
 import torchvision.transforms as T
 import os
@@ -29,6 +28,13 @@ clip_vit_model, _clip_vit_preprocess = clip.load("ViT-B/32", device='cpu')
 clip_rn50_model, _clip_rn50_preprocess = clip.load("RN50x16", device='cpu')
 
 _resnet_transforms = T.Compose([
+                        T.Resize(256),
+                        T.CenterCrop(224),
+                        T.ToTensor(),
+                        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                    ])
+
+_moco_transforms = T.Compose([
                         T.Resize(256),
                         T.CenterCrop(224),
                         T.ToTensor(),
@@ -67,8 +73,7 @@ MODEL_LIST = [
 def load_pvr_model(
     embedding_name: str, 
     cwd: str, 
-    convert_pil: bool = True, 
-    seed: int = 123
+    convert_pil: bool = True
 ) -> tuple[nn.Module, int, Callable[[Union[np.ndarray, torch.Tensor]], torch.Tensor]]:
     
     # ============================================================
@@ -124,19 +129,19 @@ def load_pvr_model(
     # ============================================================
     elif embedding_name == 'moco_conv3':
         model, embedding_dim = moco_conv3_compression_model(CHECKPOINT_DIR + '/moco_v2_conv3.pth.tar')
-        transforms = _resnet_transforms
+        transforms = _moco_transforms
     elif embedding_name == 'moco_conv4':
         model, embedding_dim = moco_conv4_compression_model(CHECKPOINT_DIR + '/moco_v2_conv4.pth.tar')
-        transforms = _resnet_transforms
+        transforms = _moco_transforms
     elif embedding_name == 'moco_conv5':
         model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_v2_800ep_pretrain.pth.tar')
-        transforms = _resnet_transforms
+        transforms = _moco_transforms
     elif embedding_name == 'moco':
         model, embedding_dim = moco_conv5_model(CHECKPOINT_DIR + '/moco_v2_800ep_pretrain.pth.tar')
-        transforms = _resnet_transforms
+        transforms = _moco_transforms
     elif embedding_name == 'moco_vit':
         model, embedding_dim = moco_vit_model(CHECKPOINT_DIR + 'vit-b-300ep.pth.tar')
-        transforms = _resnet_transforms
+        transforms = _moco_transforms
     # ============================================================
     # PVRs for Robotics Manipulation
     # ============================================================

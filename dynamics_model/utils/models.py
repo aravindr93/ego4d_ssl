@@ -140,26 +140,6 @@ class InverseDynamicsModel(nn.Module):
         embedding_loss = F.mse_loss(embeddings, embedding_window)
         return inverse_dynamics_loss, embedding_loss.detach()
 
-    """
-    def train(self, mode) -> None:
-        if self.freeze_bn:
-            self.set_model_mode(mode, False)
-        else:
-            self.pvr_model.train(mode)
-        self.state_model.train(mode)
-        self.head.train(mode)
-        self.fusion_base.train(mode)
-
-    def set_model_mode(self, train_mode: bool, update_batchnorm: bool = False):
-        for module in self.pvr_model.modules():
-            if isinstance(module, nn.BatchNorm2d) or isinstance(module, nn.BatchNorm1d):
-                for param in module.parameters():
-                    param.requires_grad = update_batchnorm
-                module.train(update_batchnorm)
-            else:
-                module.train(train_mode)
-    """
-
 
 class ForwardDynamicsModel(nn.Module):
     def __init__(
@@ -211,21 +191,3 @@ class ForwardDynamicsModel(nn.Module):
         embeddings = torch.cat(embeddings, dim=1).detach()
         embedding_loss = F.mse_loss(embeddings, embedding_window)
         return forward_dynamics_loss, embedding_loss.detach()
-
-    def train(self, mode) -> None:
-        if self.freeze_bn:
-            self.set_model_mode(mode, False)
-        else:
-            self.pvr_model.train(mode)
-        self.state_model.train(mode)
-        self.head.train(mode)
-        self.fusion_base.train(mode)
-
-    def set_model_mode(self, train_mode: bool, update_batchnorm: bool = False):
-        for module in self.pvr_model.modules():
-            if isinstance(module, nn.BatchNorm2d) or isinstance(module, nn.BatchNorm1d):
-                for param in module.parameters():
-                    param.requires_grad = update_batchnorm
-                module.train(update_batchnorm)
-            else:
-                module.train(train_mode)
