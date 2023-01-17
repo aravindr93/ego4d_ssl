@@ -5,12 +5,14 @@ from tqdm import tqdm
 from torch.utils.data import Dataset
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 import random
 import numpy as np
 import os
 import gc
+import re
 import bisect
 import pickle
 
@@ -85,7 +87,7 @@ class RandomRotateFrames:
         return frames
     
 class RandomShiftFrames:
-    def __init__(self, pad_pixels=4) -> None:
+    def __init__(self, pad_pixels=12) -> None:
         self.pad_pixels = pad_pixels
 
     def __call__(self, frames: list) -> list:
@@ -93,7 +95,7 @@ class RandomShiftFrames:
         h_new = np.random.randint(0, 2 * self.pad_pixels + 1) 
         w_new = np.random.randint(0, 2 * self.pad_pixels + 1) 
         for i in range(len(frames)):
-            frame = nn.functional.pad(frames[i], (self.pad_pixels, self.pad_pixels, self.pad_pixels, self.pad_pixels), mode='replicate')
+            frame = F.pad(frames[i], (self.pad_pixels, self.pad_pixels, self.pad_pixels, self.pad_pixels), mode='constant', value=0)
             frames[i] = frame[:, h_new:h_new + h, w_new:w_new + w]
         return frames
 
@@ -119,7 +121,7 @@ class ColorJitterFrames:
         return frames
 
 class RandomCropFrames:
-    def __init__(self, size=256) -> None:
+    def __init__(self, size=224) -> None:
         self.transform = T.RandomCrop(size)
 
     def __call__(self, frames: list) -> list:
@@ -127,20 +129,13 @@ class RandomCropFrames:
         frames = [TF.crop(frame, i, j, h, w) for frame in frames]
         return frames
 
-class RandomGrayscaleFrames:
-    def __init__(self, p=0.3) -> None:
-        self.p = p
-
+class GrayscaleFrames:
     def __call__(self, frames: list) -> list:
         num_output_channels, _, _ = TF.get_dimensions(frames[0])
-        if torch.rand(1) < self.p:
-            frames =  [TF.rgb_to_grayscale(frame, num_output_channels=num_output_channels) for frame in frames]
+        frames =  [TF.rgb_to_grayscale(frame, num_output_channels=num_output_channels) for frame in frames]
         return frames
     
 class NoAugmentationFrames:
-    def __init__(self) -> None:
-        pass
-
     def __call__(self, frames: list) -> list:
             return frames
 
@@ -149,9 +144,15 @@ AUGMENTATIONS_LIST = [
     RandomCropFrames(),
     RandomRotateFrames(),
     RandomShiftFrames(),
-    RandomGrayscaleFrames(),
+    GrayscaleFrames(),
     NoAugmentationFrames()
 ]
+
+
+# new function to sort list of trajectory subdirectories or frame files
+def natural_keys(text):
+    return [int(c) if c.isdigit() else c for c in re.split(r'(\d+)', text)]
+
 
 class FrameDataset(Dataset):
     def __init__(
@@ -170,7 +171,7 @@ class FrameDataset(Dataset):
         for env in args.envs:
             env_id = args.suite.prefix + env + args.suite.suffix
             pickle_loc = os.path.join(pickle_root, env_id + ".pickle")
-            frames_dir = os.path.join(frames_root, env_id)
+            env_subdir = os.path.join(frames_root, env_id)
             try:
                 paths = pickle.load(open(pickle_loc, 'rb'))
             except:
@@ -180,11 +181,11 @@ class FrameDataset(Dataset):
             paths = compute_embeddings_from_paths(paths, args.suite.img_keys, model, embedding_dim, transforms, device, keep_images=0)
             self.paths.extend(paths)
             self.action_dim = max(self.action_dim, paths[0]['actions'].shape[-1])
-            for traj, path in enumerate(paths):
-                traj_subdir = os.path.join(frames_dir, f"traj_{str(traj + 1)}")
+            for traj in sorted(os.listdir(env_subdir), key=natural_keys):
+                traj_subdir = os.path.join(env_subdir, traj)
                 self.frame_buffer.append([])
-                for frame_idx in range(len(path['latent_states'])):
-                    self.frame_buffer[-1].append(os.path.join(traj_subdir, f"frame_{frame_idx}.jpg"))
+                for frame in sorted(os.listdir(traj_subdir), key=natural_keys):
+                    self.frame_buffer[-1].append(os.path.join(traj_subdir, frame))
         for path in self.paths:
             path['actions'] = np.pad(path['actions'], ((0, 0), (0, self.action_dim - path['actions'].shape[-1])), constant_values=0)
         
@@ -219,7 +220,6 @@ class FrameDataset(Dataset):
             frames.append(self.to_tensor(Image.open(self.frame_buffer[path_index][max(timestep - k, 0)])))
             embeddings.append(self.paths[path_index]['latent_states'][max(timestep - k, 0)])
         if self.augmentations:
-            aug1 = random.choice(AUGMENTATIONS_LIST)
-            aug2 = random.choice(AUGMENTATIONS_LIST)
-            frames = aug2(aug1(frames))
+            aug = random.choice(AUGMENTATIONS_LIST)
+            frames = aug(frames)
         return tuple([self.transforms(frame) for frame in frames]), torch.cat(embeddings, dim=-2)
