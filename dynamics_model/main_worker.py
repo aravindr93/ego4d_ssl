@@ -58,7 +58,7 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig, train_dataset: torch
     # prepare fusion functions for combining embeddings across multiple views and timesteps (for partial observability)
     fusion_preprocess = fuse_preprocess[args.data.fuse_embeddings]
     fusion_base = fuse_base[args.data.fuse_embeddings]
-    fusion_base = fusion_base(embedding_dim, args.data.history_window, num_views=len(args.data.suite.img_keys))
+    fusion_base = fusion_base(embedding_dim, (args.data.history_window + 1), num_views=len(args.data.suite.img_keys))
     fused_embedding_dim = fusion_base.latent_dim
 
     # summarize all dimensions

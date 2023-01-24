@@ -1,9 +1,9 @@
 optimizer: 'adamw'
 
-lr: 1.0e-5
+lr: 1.e-5
 # learning rate is scaled to lr * batch_size / 256
 # drop learning rate even more to prevent embedding loss from blowing up
-weight_decay: 0.01
+weight_decay: 0.1
 momentum: 0.9
 batch_size: 128
 

@@ -24,7 +24,7 @@ def compute_embeddings(
     batch_size: int = 32, 
 ) -> torch.Tensor:
     model.to(device=device)
-    model = model.eval()
+    model.eval()
     input_len = len(processed_images)
     latent_states = torch.zeros(input_len, embedding_dim)
     with torch.no_grad():
@@ -198,7 +198,7 @@ class FrameDataset(Dataset):
         self.to_tensor = T.ToTensor()
         self.augmentations = args.augmentations
         
-        self.actions = np.concatenate([path['actions'] for path in self.paths])
+        self.actions = np.concatenate([path['actions'][:-1] for path in self.paths])
         self.proprioception = retrieve_proprioception(paths, args.suite.prop_key) if args.suite.prop_key else torch.Tensor([])
         self.ret_prop = len(self.proprioception > 0)
         self.proprioception_dim = self.proprioception.shape[-1] if self.ret_prop else 0

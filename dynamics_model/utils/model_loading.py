@@ -152,9 +152,9 @@ def load_pvr_model(
         embedding_dim = 2048
         transforms = _r3m_transforms
     elif embedding_name == 'mvp':
-        model = mvp.load("vits-mae-hoi")
+        model = mvp.load("vitb-mae-egosoup")
         model.freeze()
-        embedding_dim = 384
+        embedding_dim = 768
         transforms = _mae_transforms
     elif embedding_name in os.listdir(f"{cwd}/rep_eval/representations/"):
         representation = importlib.import_module(f"rep_eval.representations.{embedding_name}.load_representation")
