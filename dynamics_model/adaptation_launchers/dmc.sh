@@ -3,7 +3,7 @@
 # Start with MoCo checkpoint trained on Ego4D (released model)
 PYTHONPATH=. python main_launcher.py environment.slurm=False \
     dynamics=inverse \
-    logging.wandb_project="inverse_dynamics_adapt_rep" logging.name="inverse_dynamics_dmc-2" \
+    logging.wandb_project="inverse_dynamics_adapt_rep" logging.name="inverse_dynamics_dmc-4" \
     environment.ngpu=1 environment.world_size=1 \
     model.embedding=moco \
     data.pickle_dir="/home/aryanjain/data/expert_data/" \

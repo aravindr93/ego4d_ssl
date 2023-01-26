@@ -9,4 +9,4 @@ augmentations: False
 envs: ???
 fuse_embeddings: 'flare'
 history_window: 3
-latent_state_dim: 256
+latent_state_dim: 512

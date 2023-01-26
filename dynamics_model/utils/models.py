@@ -75,19 +75,19 @@ class EmbModel(nn.Module):
         state_dim: int, 
     ) -> None:
         super().__init__()
-        #self.state_batchnorm = nn.BatchNorm1d(fused_embedding_dim)
-        #self.state_mlp = nn.Sequential(
-        #    nn.Linear(fused_embedding_dim, state_dim),
-        #    nn.ReLU()
-        #)
+        self.state_batchnorm = nn.BatchNorm1d(fused_embedding_dim)
+        self.state_mlp = nn.Sequential(
+            nn.Linear(fused_embedding_dim, state_dim),
+            nn.ReLU()
+        )
 
     def forward(self, emb: torch.Tensor, prop: torch.Tensor) -> torch.Tensor:
-        #emb = torch.transpose(emb, 1, 2) if len(emb.shape) == 3 else emb
-        #emb = self.state_batchnorm(emb)
-        #emb = torch.transpose(emb, 1, 2) if len(emb.shape) == 3 else emb
-        #state_emb = self.state_mlp(emb)
-        #return state_emb
-        return emb
+        emb = torch.transpose(emb, 1, 2) if len(emb.shape) == 3 else emb
+        emb = self.state_batchnorm(emb)
+        emb = torch.transpose(emb, 1, 2) if len(emb.shape) == 3 else emb
+        state_emb = self.state_mlp(emb)
+        return state_emb
+        #return emb
 
 
 class InverseDynamicsModel(nn.Module):
@@ -104,7 +104,7 @@ class InverseDynamicsModel(nn.Module):
     ) -> None:
         super().__init__()
         self.head = build_mlp(
-            fused_embedding_dim, action_dim, eval(args.hidden_sizes), args.activation, 
+            latent_state_dim + latent_state_dim, action_dim, eval(args.hidden_sizes), args.activation, 
             'identity', args.batchnorm, args.dropout)
         self.pvr_model = pvr_model
 
@@ -126,15 +126,15 @@ class InverseDynamicsModel(nn.Module):
         embeddings = []
         for frame_batch in observation_window:
             embeddings.append(self.pvr_model(frame_batch).unsqueeze(dim=1))
-        #curr_observation = self.fusion_preprocess(embeddings[:-1])
-        #next_observation = self.fusion_preprocess(embeddings[1:])
-        #curr_latent = self.state_model(self.fusion_base(curr_observation), curr_prop)
-        #next_latent = self.state_model(self.fusion_base(next_observation), next_prop)
+        curr_observation = self.fusion_preprocess(embeddings[:-1])
+        next_observation = self.fusion_preprocess(embeddings[1:])
+        curr_latent = self.state_model(self.fusion_base(curr_observation), curr_prop)
+        next_latent = self.state_model(self.fusion_base(next_observation), next_prop)
 
-        #action_pred = self.head(torch.cat([curr_latent, next_latent], dim=-1))
+        action_pred = self.head(torch.cat([curr_latent, next_latent], dim=-1))
         
-        latent_observations = self.fusion_preprocess(embeddings)
-        action_pred = self.head(latent_observations)
+        #latent_observations = self.fusion_preprocess(embeddings)
+        #action_pred = self.head(latent_observations)
 
         inverse_dynamics_loss = F.mse_loss(action_pred, action)
 

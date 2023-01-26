@@ -2,9 +2,9 @@ embedding: ???
 
 sync_bn: True
 freeze_bn: False
-hidden_sizes: (256, 256, 256)
+hidden_sizes: (256, 256)
 state_model_proj: 256
 activation: 'relu'
-batchnorm: True
+batchnorm: False
 dropout: 0
 
