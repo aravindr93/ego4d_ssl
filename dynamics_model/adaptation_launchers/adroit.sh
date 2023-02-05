@@ -2,10 +2,11 @@
 
 # Start with MoCo checkpoint trained on Ego4D (released model)
 PYTHONPATH=. python main_launcher.py environment.slurm=True \
-    dynamics='inverse' \
+    dynamics=inverse \
     logging.wandb_project="inverse_dynamics_adapt_rep" logging.name="inverse_dynamics_adroit" \
-    environment.ngpu=8 environment.world_size=1 \
+    environment.ngpu=1 environment.world_size=1 \
     model.embedding=moco \
     data.pickle_dir="/home/aryanjain/data/expert_data/" \
     data.frames_dir="/shared/aryanjain/data/expert_data/" \
-    data.suite='Adroit' 'data.envs=["relocate", "pen"]'
+    data.suite='Adroit' 'data.envs=["relocate", "pen"]' \
+    optim.batch_size=64

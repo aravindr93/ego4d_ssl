@@ -274,11 +274,11 @@ def train(
         if args.environment.gpu is not None:
             obs_window = list(obs_window)
             for j in range(len(obs_window)):
-                obs_window[j] = obs_window[j].cuda(args.environment.gpu, non_blocking=True)
-            embeddings = embeddings.detach().cuda(args.environment.gpu, non_blocking=True)
-            curr_prop = curr_prop.cuda(args.environment.gpu, non_blocking=True)
-            next_prop = next_prop.cuda(args.environment.gpu, non_blocking=True)
-            action = action.cuda(args.environment.gpu, non_blocking=True)
+                obs_window[j] = obs_window[j].float().cuda(args.environment.gpu, non_blocking=True)
+            embeddings = embeddings.float().detach().cuda(args.environment.gpu, non_blocking=True)
+            curr_prop = curr_prop.float().cuda(args.environment.gpu, non_blocking=True)
+            next_prop = next_prop.float().cuda(args.environment.gpu, non_blocking=True)
+            action = action.float().cuda(args.environment.gpu, non_blocking=True)
 
         # compute output
         with torch.cuda.amp.autocast(True):

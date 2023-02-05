@@ -199,7 +199,7 @@ class FrameDataset(Dataset):
         self.augmentations = args.augmentations
         
         self.actions = np.concatenate([path['actions'][:-1] for path in self.paths])
-        self.proprioception = retrieve_proprioception(paths, args.suite.prop_key) if args.suite.prop_key else torch.Tensor([])
+        self.proprioception = retrieve_proprioception(self.paths, args.suite.prop_key) if args.suite.prop_key else torch.Tensor([])
         self.ret_prop = len(self.proprioception > 0)
         self.proprioception_dim = self.proprioception.shape[-1] if self.ret_prop else 0
 
