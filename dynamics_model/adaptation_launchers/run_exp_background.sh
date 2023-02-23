@@ -1,1 +1,1 @@
-nohup ./adaptation_launchers/dmc.sh &
+nohup ./adaptation_launchers/adroit.sh &
