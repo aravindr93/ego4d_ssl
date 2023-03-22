@@ -1,3 +1,4 @@
+from __future__ import annotations
 import torch 
 import torch.nn as nn
 from typing import Callable, Type
@@ -6,7 +7,7 @@ from typing import Callable, Type
 # Fusion Preprocessing
 # ===================================
 def fuse_preprocess_concat(embeddings: list[torch.Tensor]) -> torch.Tensor:
-    # Input is a list of history_window frames of dimension (..., num_views, embedding_dim)
+    # Input is a list of history_window number of frames of dimension (..., num_views, embedding_dim)
     # Output is a single torch tensor of dimension (..., history_window * num_views * embedding_dim)
     if isinstance(embeddings[0], torch.Tensor):
         return torch.stack(embeddings, dim=-3).flatten(start_dim=-3)
@@ -15,19 +16,19 @@ def fuse_preprocess_concat(embeddings: list[torch.Tensor]) -> torch.Tensor:
         quit()
 
 def fuse_preprocess_flare(embeddings: list[torch.Tensor]) -> torch.Tensor:
-    # Input is a list of history_window frames of dimension (..., num_views, embedding_dim)
+    # Input is a list of history_window number of frames of dimension (..., num_views, embedding_dim)
     # Output is a single torch tensor of dimension (..., history_window * num_views * embedding_dim)
     if isinstance(embeddings[0], torch.Tensor):
         history_window = len(embeddings)
         delta = [embeddings[i + 1] - embeddings[i] for i in range(history_window - 1)]
-        delta.append(embeddings[-1].clone())
+        delta.append(embeddings[-1])
         return torch.stack(delta, dim=-3).flatten(start_dim=-3)
     else:
         print("Unsupported embedding format in fuse_preprocess_transformer: each embedding should be a torch.Tensor")
         quit()
 
 def fuse_preprocess_conv1d(embeddings: list[torch.Tensor]) -> torch.Tensor:
-    # Input is a list of history_window frames of dimension (..., num_views, embedding_dim)
+    # Input is a list of history_window number of frames of dimension (..., num_views, embedding_dim)
     # Output is a single torch tensor of dimension (..., history_window * num_views, embedding_dim)
     if isinstance(embeddings[0], torch.Tensor):
         return torch.stack(embeddings, dim=-3).flatten(start_dim=-3, end_dim=-2)
@@ -36,7 +37,7 @@ def fuse_preprocess_conv1d(embeddings: list[torch.Tensor]) -> torch.Tensor:
         quit()
 
 def fuse_preprocess_transformer(embeddings: list[torch.Tensor]) -> torch.Tensor:
-    # Input is a list of history_window frames of dimension (..., num_views, embedding_dim)
+    # Input is a list of history_window number of frames of dimension (..., num_views, embedding_dim)
     # Output is a single torch tensor of dimension (..., history_window * num_views, embedding_dim)
     if isinstance(embeddings[0], torch.Tensor):
         return torch.stack(embeddings, dim=-3).flatten(start_dim=-3, end_dim=-2)
@@ -64,7 +65,7 @@ class IdentityBase(nn.Module):
         return x
 
 class Conv1DBase(nn.Module):
-    def __init__(self, embedding_dim: int, history_window: int, num_views: int, projection_dim: int = 384, **kwargs) -> None:
+    def __init__(self, embedding_dim: int, history_window: int, num_views: int, projection_dim: int = 256, **kwargs) -> None:
         super().__init__()
         self.projection = nn.Linear(in_features=embedding_dim, out_features=projection_dim)
         self.latent_dim = history_window * num_views * projection_dim

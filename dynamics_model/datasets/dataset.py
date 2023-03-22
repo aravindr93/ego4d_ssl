@@ -24,7 +24,7 @@ def compute_embeddings(
     batch_size: int = 32, 
 ) -> torch.Tensor:
     model.to(device=device)
-    model.eval()
+    model = model.eval()
     input_len = len(processed_images)
     latent_states = torch.zeros(input_len, embedding_dim)
     with torch.no_grad():
@@ -46,8 +46,7 @@ def compute_embeddings_from_paths(
     transforms: Callable[[Union[np.ndarray, torch.Tensor]], torch.Tensor],
     device: str = 'cpu', 
     batch_size: int = 32, 
-    keep_images: int = 25, 
-    stack_or_concat: str = 'stack'
+    keep_images: int = 25
 ) -> list[dict[str, Any]]:
     for idx, path in enumerate(tqdm(paths)):
         latent_states = []
@@ -57,10 +56,8 @@ def compute_embeddings_from_paths(
                 del(path[img_key])   # no longer need the images, free up RAM
                 gc.collect()
             latent_states.append(compute_embeddings(processed_images, model, embedding_dim, device, batch_size))
-        if stack_or_concat == 'stack':
-            path['latent_states'] = torch.stack(latent_states, dim=1)
-        else:
-            path['latent_states'] = torch.cat(latent_states, dim=1)
+        # path['embeddings] will have shape (path_len, num_views, embedding_dim)
+        path['embeddings'] = torch.stack(latent_states, dim=1)
         del latent_states
         gc.collect()
     return paths
@@ -73,7 +70,7 @@ def retrieve_proprioception(
     # assume at most 1 prop key for now
     prop = []
     for path in paths:
-        prop.append(torch.from_numpy(path['env_infos'][prop_key]))
+        prop.append(torch.from_numpy(path['env_infos'][prop_key].astype(np.float64)))
     return torch.cat(prop)
 
 
@@ -163,6 +160,8 @@ class FrameDataset(Dataset):
         args: DictConfig,
         device: str
     ) -> None:
+        self.img_keys = args.suite.img_keys
+
         self.paths = []
         self.frame_buffer = []
         self.action_dim = 0
@@ -174,6 +173,7 @@ class FrameDataset(Dataset):
             env_subdir = os.path.join(frames_root, env_id)
             try:
                 paths = pickle.load(open(pickle_loc, 'rb'))
+                paths = paths[:args.num_demos]
             except:
                 print("Unable to load the data. Check the data path.")
                 print(pickle_loc)
@@ -184,8 +184,12 @@ class FrameDataset(Dataset):
             for traj in sorted(os.listdir(env_subdir), key=natural_keys):
                 traj_subdir = os.path.join(env_subdir, traj)
                 self.frame_buffer.append([])
-                for frame in sorted(os.listdir(traj_subdir), key=natural_keys):
-                    self.frame_buffer[-1].append(os.path.join(traj_subdir, frame))
+                for img_key in self.img_keys:
+                    frame_subdir = os.path.join(traj_subdir, img_key)
+                    for idx, frame in enumerate(sorted(os.listdir(frame_subdir), key=natural_keys)):
+                        if len(self.frame_buffer[-1]) <= idx:
+                            self.frame_buffer[-1].append({})
+                        self.frame_buffer[-1][idx][img_key] = os.path.join(frame_subdir, frame)
         for path in self.paths:
             path['actions'] = np.pad(path['actions'], ((0, 0), (0, self.action_dim - path['actions'].shape[-1])), constant_values=0)
         
@@ -193,7 +197,6 @@ class FrameDataset(Dataset):
         self.timestep_cumsum = np.cumsum([len(path['actions']) - 1 for path in self.paths])
         self.history_window = args.history_window
         
-        self.img_keys = args.suite.img_keys
         self.transforms = transforms
         self.to_tensor = T.ToTensor()
         self.augmentations = args.augmentations
@@ -217,8 +220,9 @@ class FrameDataset(Dataset):
     def retrieve_frames(self, path_index: int, timestep: int) -> list[tuple[torch.Tensor]]:
         frames, embeddings = [], []
         for k in range(self.history_window - 1, -2, -1):
-            frames.append(self.to_tensor(Image.open(self.frame_buffer[path_index][max(timestep - k, 0)])))
-            embeddings.append(self.paths[path_index]['latent_states'][max(timestep - k, 0)])
+            for img_key in self.img_keys:
+                frames.append(self.to_tensor(Image.open(self.frame_buffer[path_index][max(timestep - k, 0)][img_key])))
+            embeddings.append(self.paths[path_index]['embeddings'][max(timestep - k, 0)])
         if self.augmentations:
             aug = random.choice(AUGMENTATIONS_LIST)
             frames = aug(frames)

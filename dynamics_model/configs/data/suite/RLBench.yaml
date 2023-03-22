@@ -1,0 +1,5 @@
+name: 'RLBench'
+prefix: ''
+suffix: '-vision-v1'
+img_keys: ["front", "wrist"]
+prop_key: False

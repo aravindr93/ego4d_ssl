@@ -87,7 +87,6 @@ class EmbModel(nn.Module):
         emb = torch.transpose(emb, 1, 2) if len(emb.shape) == 3 else emb
         state_emb = self.state_mlp(emb)
         return state_emb
-        #return emb
 
 
 class InverseDynamicsModel(nn.Module):
@@ -98,6 +97,8 @@ class InverseDynamicsModel(nn.Module):
         latent_state_dim: int,
         action_dim: int, 
         pvr_model: nn.Module,
+        history_window: int,
+        num_views: int,
         args: DictConfig,
         fusion_preprocess: Callable[[list[torch.Tensor]], torch.Tensor],
         fusion_base: nn.Module,
@@ -114,32 +115,33 @@ class InverseDynamicsModel(nn.Module):
             self.state_model = EmbModel(fused_embedding_dim, proprioception_dim, args.state_model_proj, latent_state_dim)
         self.fusion_preprocess = fusion_preprocess
         self.fusion_base = fusion_base
+        self.history_window = history_window
+        self.num_views = num_views
 
     def forward(
         self, 
-        observation_window: list[torch.Tensor], 
-        embedding_window: torch.Tensor, 
+        observations: list[torch.Tensor], 
+        emb_hist_windows: torch.Tensor, 
         curr_prop: torch.Tensor, 
         next_prop: torch.Tensor, 
         action: torch.Tensor
     ):
         embeddings = []
-        for frame_batch in observation_window:
-            embeddings.append(self.pvr_model(frame_batch).unsqueeze(dim=1))
-        curr_observation = self.fusion_preprocess(embeddings[:-1])
-        next_observation = self.fusion_preprocess(embeddings[1:])
-        curr_latent = self.state_model(self.fusion_base(curr_observation), curr_prop)
-        next_latent = self.state_model(self.fusion_base(next_observation), next_prop)
+        for i in range(self.history_window + 1):
+            views = []
+            for j in range(self.num_views):
+                views.append(self.pvr_model(observations[i * self.num_views + j]))
+            embeddings.append(torch.stack(views, dim=1))
+        curr_observation = self.fusion_base(self.fusion_preprocess(embeddings[:-1]))
+        next_observation = self.fusion_base(self.fusion_preprocess(embeddings[1:]))
+        curr_latent = self.state_model(curr_observation, curr_prop)
+        next_latent = self.state_model(next_observation, next_prop)
 
         action_pred = self.head(torch.cat([curr_latent, next_latent], dim=-1))
-        
-        #latent_observations = self.fusion_preprocess(embeddings)
-        #action_pred = self.head(latent_observations)
-
         inverse_dynamics_loss = F.mse_loss(action_pred, action)
 
         embeddings = torch.cat(embeddings, dim=1).detach()
-        embedding_loss = F.mse_loss(embeddings, embedding_window)
+        embedding_loss = F.mse_loss(embeddings, emb_hist_windows)
         return inverse_dynamics_loss, embedding_loss.detach()
 
 
@@ -151,6 +153,8 @@ class ForwardDynamicsModel(nn.Module):
         latent_state_dim: int,
         action_dim: int, 
         pvr_model: nn.Module,
+        history_window: int,
+        num_views: int,
         args: DictConfig,
         fusion_preprocess: Callable[[list[torch.Tensor]], torch.Tensor],
         fusion_base: nn.Module,
@@ -167,27 +171,31 @@ class ForwardDynamicsModel(nn.Module):
             self.state_model = EmbModel(fused_embedding_dim, proprioception_dim, args.state_model_proj, latent_state_dim)
         self.fusion_preprocess = fusion_preprocess
         self.fusion_base = fusion_base
+        self.history_window = history_window
+        self.num_views = num_views
 
     def forward(
         self, 
-        observation_window: list[torch.Tensor], 
-        embedding_window: torch.Tensor, 
+        observations: list[torch.Tensor], 
+        emb_hist_windows: torch.Tensor, 
         curr_prop: torch.Tensor, 
         next_prop: torch.Tensor, 
         action: torch.Tensor
     ):
         embeddings = []
-        for frame_batch in observation_window:
-            embeddings.append(self.pvr_model(frame_batch).unsqueeze(dim=1))
-        curr_observation = self.fusion_preprocess(embeddings[:-1])
-        next_observation = self.fusion_preprocess(embeddings[1:])
-        curr_latent = self.state_model(self.fusion_base(curr_observation), curr_prop)
-        next_latent = self.state_model(self.fusion_base(next_observation), next_prop)
+        for i in range(self.history_window + 1):
+            views = []
+            for j in range(self.num_views):
+                views.append(self.pvr_model(observations[i * self.num_views + j]))
+            embeddings.append(torch.stack(views, dim=1))
+        curr_observation = self.fusion_base(self.fusion_preprocess(embeddings[:-1]))
+        next_observation = self.fusion_base(self.fusion_preprocess(embeddings[1:]))
+        curr_latent = self.state_model(curr_observation, curr_prop)
+        next_latent = self.state_model(next_observation, next_prop)
 
         next_latent_pred = self.head(torch.cat([curr_latent, action], dim=-1))
-
         forward_dynamics_loss = F.mse_loss(next_latent_pred, next_latent)
 
         embeddings = torch.cat(embeddings, dim=1).detach()
-        embedding_loss = F.mse_loss(embeddings, embedding_window)
+        embedding_loss = F.mse_loss(embeddings, emb_hist_windows)
         return forward_dynamics_loss, embedding_loss.detach()

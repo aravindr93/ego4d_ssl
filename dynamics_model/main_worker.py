@@ -88,9 +88,13 @@ def main_worker(gpu, ngpus_per_node: int, args: DictConfig, train_dataset: torch
 
     # create dynamics model
     if args.dynamics == 'inverse':
-        model = InverseDynamicsModel(fused_embedding_dim, proprioception_dim, latent_state_dim, action_dim, pvr_model, args.model, fusion_preprocess, fusion_base)
+        model = InverseDynamicsModel(
+            fused_embedding_dim, proprioception_dim, latent_state_dim, action_dim, pvr_model, args.data.history_window,
+            len(args.data.suite.img_keys), args.model, fusion_preprocess, fusion_base)
     elif args.dynamics == 'forward':
-        model = ForwardDynamicsModel(fused_embedding_dim, proprioception_dim, latent_state_dim, action_dim, pvr_model, args.model, fusion_preprocess, fusion_base)
+        model = ForwardDynamicsModel(
+            fused_embedding_dim, proprioception_dim, latent_state_dim, action_dim, pvr_model, args.data.history_window,
+            len(args.data.suite.img_keys), args.model, fusion_preprocess, fusion_base)
     else:
         raise NotImplementedError("Dynamics must either be forward or inverse")
 
