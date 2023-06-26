@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as T
+import torchvision.transforms.functional as TF
 import os
 import sys
 import importlib
@@ -18,40 +19,62 @@ from timm.models.vision_transformer import VisionTransformer, _cfg
 from timm.models.layers import PatchEmbed
 from r3m import load_r3m
 import clip
+from vc_models.models.vit import model_utils
 sys.path.append(os.environ['MAE_PATH'])
 import models_mae
 import mvp
 
 CHECKPOINT_DIR = os.environ['CHECKPOINT_DIR']
 
-clip_vit_model, _clip_vit_preprocess = clip.load("ViT-B/32", device='cpu')
-clip_rn50_model, _clip_rn50_preprocess = clip.load("RN50x16", device='cpu')
+class MaybeToTensor:
+    def __call__(self, pic):
+        """
+        Args:
+            pic (PIL Image or numpy.ndarray): Image to be converted to tensor.
+
+        Returns:
+            Tensor: Converted image.
+        """
+        if isinstance(pic, torch.Tensor):
+            return pic
+        else:
+            return TF.to_tensor(pic)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
 
 _resnet_transforms = T.Compose([
                         T.Resize(256),
                         T.CenterCrop(224),
-                        T.ToTensor(),
+                        MaybeToTensor(),
                         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                    ])
+
+_clip_transforms = lambda size : T.Compose([
+                        T.Resize(size, interpolation=InterpolationMode.BICUBIC),
+                        MaybeToTensor(),
+                        T.Normalize((0.48145466, 0.4578275, 0.40821073), 
+                                    (0.26862954, 0.26130258, 0.27577711))
                     ])
 
 _moco_transforms = T.Compose([
                         T.Resize(256),
                         T.CenterCrop(224),
-                        T.ToTensor(),
+                        MaybeToTensor(),
                         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
                     ])
 
 _mae_transforms = T.Compose([
                         T.Resize(256, interpolation=InterpolationMode.BICUBIC),
                         T.CenterCrop(224),
-                        T.ToTensor(),
+                        MaybeToTensor(),
                         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
                     ])
 
 _r3m_transforms = T.Compose([
                         T.Resize(256, interpolation=InterpolationMode.BICUBIC),
                         T.CenterCrop(224),
-                        T.ToTensor(),  # this divides by 255
+                        MaybeToTensor(),  # this divides by 255
                         T.Normalize(mean=[0.0, 0.0, 0.0], std=[1/255, 1/255, 1/255]), # this will scale bact to [0-255]
                     ])
 
@@ -62,8 +85,7 @@ MODEL_LIST = [
     'clip_vit', 'clip_rn50',
     'mae-B', 'mae-L', 'mae-H',
     'moco', 'moco_vit',
-    'moco_conv5', 'moco_conv4', 'moco_conv3',
-    'r3m', 'mvp'
+    'r3m', 'mvp', 'vc1'
 ]
 
 
@@ -116,13 +138,15 @@ def load_pvr_model(
     # ============================================================
     elif embedding_name == 'clip_vit':
         # CLIP with Vision Transformer architecture
+        clip_vit_model, _ = clip.load("ViT-B/32", device='cpu')
         model = clip_vit_model.visual
-        transforms = _clip_vit_preprocess
+        transforms = _clip_transforms(224)
         embedding_dim = 512
     elif embedding_name == 'clip_rn50':
         # CLIP with ResNet50x16 (large model) architecture
+        clip_rn50_model, _ = clip.load("RN50x16", device='cpu')
         model = clip_rn50_model.visual
-        transforms = _clip_rn50_preprocess
+        transforms = _clip_transforms(384)
         embedding_dim = 768
     # ============================================================
     # MoCo (Aug+)
@@ -156,15 +180,20 @@ def load_pvr_model(
         model.freeze()
         embedding_dim = 768
         transforms = _mae_transforms
+    elif embedding_name == 'vc1':
+        model, embedding_dim, transforms, _ = model_utils.load_model(model_utils.VC1_BASE_NAME)
+    # ============================================================
+    # Custom Backbones
+    # ============================================================
     elif embedding_name in os.listdir(f"{cwd}/rep_eval/representations/"):
         representation = importlib.import_module(f"rep_eval.representations.{embedding_name}.load_representation")
-        model, embedding_dim, transforms = representation.load_representation(cwd)
+        model, embedding_dim, transforms, optimizer = representation.load_representation(cwd)
     else:
         print("Model not implemented.")
         raise NotImplementedError
 
-    if convert_pil:
-        transforms = T.Compose([T.ToPILImage(), transforms])
+    #if convert_pil:
+    #    transforms = T.Compose([T.ToPILImage(), transforms])
             
     return model, embedding_dim, transforms
 

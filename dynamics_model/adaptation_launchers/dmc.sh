@@ -3,10 +3,10 @@
 # Start with MoCo checkpoint trained on Ego4D (released model)
 PYTHONPATH=. python main_launcher.py environment.slurm=False \
     dynamics=inverse \
-    logging.wandb_project="inverse_dynamics_adapt_rep" logging.name="inverse_dynamics_dmc-4" \
+    logging.wandb_project="inverse_dynamics_adapt_rep" logging.name="inverse_dynamics_dmc-clip" \
     environment.ngpu=1 environment.world_size=1 \
-    model.embedding=r3m \
+    model.embedding=clip_vit \
     data.pickle_dir="/home/aryanjain/data/expert_data/" \
-    data.frames_dir="/shared/aryanjain/data/expert_data/" \
+    data.frames_dir="/shared/aryanjain/expert_data/" \
     data/suite=DMC 'data.envs=["walker_walk", "walker_stand", "cheetah_run", "finger_spin", "reacher_easy"]'  \
-    optim.batch_size=64
+    optim.batch_size=32

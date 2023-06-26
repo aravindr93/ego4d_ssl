@@ -15,13 +15,14 @@ import gc
 import re
 import bisect
 import pickle
+import time
 
 def compute_embeddings(
-    processed_images: torch.Tensor, 
-    model: nn.Module, 
-    embedding_dim: int, 
-    device: str = 'cpu', 
-    batch_size: int = 32, 
+    processed_images: torch.Tensor,
+    model: nn.Module,
+    embedding_dim: int,
+    device: str = 'cuda',
+    batch_size: int = 32,
 ) -> torch.Tensor:
     model.to(device=device)
     model = model.eval()
@@ -31,27 +32,31 @@ def compute_embeddings(
         for idx in range(input_len // batch_size + 1):
             start = idx * batch_size
             end = min((idx + 1) * batch_size, input_len)
-            
-            batch = processed_images[start:end]
-            embs = model(batch.to(device))
+
+            batch = processed_images[start:end].to(device)
+            embs = model(batch)
             latent_states[start:end] = embs
     return latent_states.detach()
 
 
 def compute_embeddings_from_paths(
-    paths: list[dict[str, Any]], 
-    img_keys: list[str], 
-    model: nn.Module, 
-    embedding_dim: int, 
+    paths: list[dict[str, Any]],
+    img_keys: list[str],
+    model: nn.Module,
+    embedding_dim: int,
     transforms: Callable[[Union[np.ndarray, torch.Tensor]], torch.Tensor],
-    device: str = 'cpu', 
-    batch_size: int = 32, 
+    device: str = 'cuda',
+    batch_size: int = 32,
     keep_images: int = 25
 ) -> list[dict[str, Any]]:
     for idx, path in enumerate(tqdm(paths)):
         latent_states = []
         for img_key in img_keys:
-            processed_images = torch.stack([transforms(frame) for frame in path[img_key]])
+            processed_images = torch.from_numpy(path[img_key].transpose((0, 3, 1, 2))).contiguous()
+            if isinstance(processed_images, torch.ByteTensor):
+                processed_images = processed_images.float().div(255)
+            #processed_images = torch.stack([transforms(frame) for frame in path[img_key]])
+            processed_images = transforms(processed_images)
             if idx < len(paths) - keep_images:
                 del(path[img_key])   # no longer need the images, free up RAM
                 gc.collect()
@@ -82,15 +87,15 @@ class RandomRotateFrames:
         angle = random.choice(self.angles)
         frames = [TF.rotate(frame, angle) for frame in frames]
         return frames
-    
+
 class RandomShiftFrames:
     def __init__(self, pad_pixels=12) -> None:
         self.pad_pixels = pad_pixels
 
     def __call__(self, frames: list) -> list:
         _, h, w = TF.get_dimensions(frames[0])
-        h_new = np.random.randint(0, 2 * self.pad_pixels + 1) 
-        w_new = np.random.randint(0, 2 * self.pad_pixels + 1) 
+        h_new = np.random.randint(0, 2 * self.pad_pixels + 1)
+        w_new = np.random.randint(0, 2 * self.pad_pixels + 1)
         for i in range(len(frames)):
             frame = F.pad(frames[i], (self.pad_pixels, self.pad_pixels, self.pad_pixels, self.pad_pixels), mode='constant', value=0)
             frames[i] = frame[:, h_new:h_new + h, w_new:w_new + w]
@@ -131,7 +136,7 @@ class GrayscaleFrames:
         num_output_channels, _, _ = TF.get_dimensions(frames[0])
         frames =  [TF.rgb_to_grayscale(frame, num_output_channels=num_output_channels) for frame in frames]
         return frames
-    
+
 class NoAugmentationFrames:
     def __call__(self, frames: list) -> list:
             return frames
@@ -153,9 +158,9 @@ def natural_keys(text):
 
 class FrameDataset(Dataset):
     def __init__(
-        self, 
-        model: nn.Module, 
-        embedding_dim: int, 
+        self,
+        model: nn.Module,
+        embedding_dim: int,
         transforms: Callable[[Union[np.ndarray, torch.Tensor]], torch.Tensor],
         args: DictConfig,
         device: str
@@ -184,23 +189,21 @@ class FrameDataset(Dataset):
             for traj in sorted(os.listdir(env_subdir), key=natural_keys):
                 traj_subdir = os.path.join(env_subdir, traj)
                 self.frame_buffer.append([])
-                for img_key in self.img_keys:
-                    frame_subdir = os.path.join(traj_subdir, img_key)
-                    for idx, frame in enumerate(sorted(os.listdir(frame_subdir), key=natural_keys)):
-                        if len(self.frame_buffer[-1]) <= idx:
-                            self.frame_buffer[-1].append({})
-                        self.frame_buffer[-1][idx][img_key] = os.path.join(frame_subdir, frame)
+                for idx, frame in enumerate(sorted(os.listdir(traj_subdir), key=natural_keys)):
+                    if len(self.frame_buffer[-1]) <= idx:
+                        self.frame_buffer[-1].append({})
+                    self.frame_buffer[-1][idx]['images'] = os.path.join(traj_subdir, frame)
         for path in self.paths:
             path['actions'] = np.pad(path['actions'], ((0, 0), (0, self.action_dim - path['actions'].shape[-1])), constant_values=0)
-        
+
         self.total_timesteps = sum([len(path['actions']) - 1 for path in self.paths])
         self.timestep_cumsum = np.cumsum([len(path['actions']) - 1 for path in self.paths])
         self.history_window = args.history_window
-        
+
         self.transforms = transforms
         self.to_tensor = T.ToTensor()
         self.augmentations = args.augmentations
-        
+
         self.actions = np.concatenate([path['actions'][:-1] for path in self.paths])
         self.proprioception = retrieve_proprioception(self.paths, args.suite.prop_key) if args.suite.prop_key else torch.Tensor([])
         self.ret_prop = len(self.proprioception > 0)
