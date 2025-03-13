@@ -1,0 +1,5 @@
+name: 'Metaworld'
+prefix: ''
+suffix: '-v2-goal-observable'
+img_keys: ["images"]
+prop_key: False

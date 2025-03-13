@@ -1,0 +1,1 @@
+nohup ./adaptation_launchers/dmc.sh &

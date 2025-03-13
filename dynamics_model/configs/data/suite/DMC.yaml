@@ -1,0 +1,5 @@
+name: 'DMC'
+prefix: 'dmc_'
+suffix: '-v1'
+img_keys: ["images"]
+prop_key: False

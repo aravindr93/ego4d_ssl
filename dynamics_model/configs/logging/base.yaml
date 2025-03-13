@@ -1,0 +1,13 @@
+print_freq: 10
+save_freq: 5
+name: 'exp'
+log_tb: True
+wandb_user: aryan9101
+wandb_project: inverse_dynamics_adapt_rep
+ckpt_dir: '/home/aryanjain/dynamics_model/${logging.name}/checkpoints/'
+tb_dir: '/home/aryanjain/dynamics_model/${logging.name}/tblogs/'
+submitit_dir: '/home/aryanjain/dynamics_model/${logging.name}/submitit_train_logs/'
+result_dir: '/home/aryanjain/dynamics_model/${logging.name}/results/' 
+eval_freq: 5
+suffix: ''
+visualize: False

@@ -10,7 +10,6 @@ from pathlib import Path
 import warnings
 import random
 import os
-import numpy as np
 
 os.environ["MKL_THREADING_LAYER"] = "GNU"
 os.environ["MKL_SERVICE_FORCE_INTEL"] = "1"
@@ -62,6 +61,9 @@ class Worker:
         import torch.utils.data.distributed
         import torch.backends.cudnn as cudnn
 
+        from utils.model_loading import load_pvr_model
+        from datasets.dataset import FrameDataset
+
         cudnn.benchmark = True
         args = copy.deepcopy(origargs)
         np.set_printoptions(precision=3)
@@ -90,17 +92,8 @@ class Worker:
             args.environment.dist_url = (
                 f"tcp://{args.environment.node}:{args.environment.port}"
             )
-        print("Using url {}".format(args.environment.dist_url))
 
         print("Using url {}".format(args.environment.dist_url))
-
-        # writer = None
-        # if args.logging.log_tb:
-        #     os.makedirs(os.path.join(args.logging.tb_dir, args.logging.name),
-        #                 exist_ok=True)
-        #     writer = SummaryWriter(
-        #         os.path.join(args.logging.tb_dir, args.logging.name))
-        #     writer.add_text('exp_dir', os.getcwd())
 
         if args.environment.seed is not None:
             random.seed(args.environment.seed)
@@ -112,6 +105,27 @@ class Worker:
                 "You may see unexpected behavior when restarting "
                 "from checkpoints."
             )
+
+        # load the pvr backbone with default weights
+        print("=> creating {} model with default pre-trained weights".format(args.model.embedding))
+        pvr_model, embedding_dim, transforms = load_pvr_model(args.model.embedding, None)
+
+        # load separate weights for the pvr backbone if needed
+        if os.path.exists(args.environment.load_path):
+            print("=> loading checkpoint '{}'".format(args.environment.load_path))
+            if args.environment.gpu == "":
+                checkpoint = torch.load(args.environment.load_path)
+            else:
+                # Map model to be loaded to specified single gpu.
+                loc = "cuda:{}".format(args.environment.gpu)
+                checkpoint = torch.load(args.environment.load_path, map_location=loc)
+            pvr_model.load_state_dict(checkpoint["state_dict"])
+            print("=> loaded {} model from '{}'".format(args.model.embedding, args.environment.load_path))
+
+        # prepare the training dataset
+        train_dataset = FrameDataset(pvr_model, embedding_dim, transforms, args.data, "cuda")
+        print("Dataset ready for fine-tuning")
+
         if args.environment.gpu != "":
             warnings.warn(
                 "You have chosen a specific GPU. This will completely "
@@ -132,10 +146,10 @@ class Worker:
             args.environment.world_size = ngpus_per_node * args.environment.world_size
             # Use torch.multiprocessing.spawn to launch distributed processes: the
             # main_worker process function
-            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+            mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, train_dataset))
         else:
             # Simply call main_worker function
-            main_worker(args.environment.gpu, ngpus_per_node, args)
+            main_worker(args.environment.gpu, ngpus_per_node, args, train_dataset)
 
     def checkpoint(self, *args, **kwargs) -> submitit.helpers.DelayedSubmission:
         return submitit.helpers.DelayedSubmission(
@@ -177,13 +191,13 @@ def load_jobs(N=1000, end_after="$(date +%Y-%m-%d-%H:%M)"):
     return jobs_parsed
 
 
-@hydra.main(config_path="./configs/moco", config_name="config")  # , version_base="1.1")
+@hydra.main(config_path="./configs", config_name="config", version_base="1.1")
 def main(args):
     update_pythonpath_relative_hydra()
     args.logging.ckpt_dir = hydra_utils.to_absolute_path(args.logging.ckpt_dir)
     args.logging.tb_dir = hydra_utils.to_absolute_path(args.logging.tb_dir)
-    args.data.train_filelist = hydra_utils.to_absolute_path(args.data.train_filelist)
-    # args.data.val_filelist = hydra_utils.to_absolute_path(args.data.val_filelist)
+    args.data.pickle_dir = hydra_utils.to_absolute_path(args.data.pickle_dir)
+    args.data.frames_dir = hydra_utils.to_absolute_path(args.data.frames_dir)
 
     # If job is running, ignore
     jobdets = load_jobs()

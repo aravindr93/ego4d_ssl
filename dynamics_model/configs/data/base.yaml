@@ -1,0 +1,12 @@
+defaults:
+    - suite: DMC
+
+pickle_dir: ???
+frames_dir: ???
+num_demos: 100
+augmentations: False
+
+envs: ???
+fuse_embeddings: 'flare'
+history_window: 3
+latent_state_dim: 256

@@ -94,14 +94,6 @@ class Worker:
 
         print("Using url {}".format(args.environment.dist_url))
 
-        # writer = None
-        # if args.logging.log_tb:
-        #     os.makedirs(os.path.join(args.logging.tb_dir, args.logging.name),
-        #                 exist_ok=True)
-        #     writer = SummaryWriter(
-        #         os.path.join(args.logging.tb_dir, args.logging.name))
-        #     writer.add_text('exp_dir', os.getcwd())
-
         if args.environment.seed is not None:
             random.seed(args.environment.seed)
             torch.manual_seed(args.environment.seed)
@@ -177,13 +169,13 @@ def load_jobs(N=1000, end_after="$(date +%Y-%m-%d-%H:%M)"):
     return jobs_parsed
 
 
-@hydra.main(config_path="./configs/moco", config_name="config")  # , version_base="1.1")
+@hydra.main(config_path="./configs/moco", config_name="config", version_base="1.1")
 def main(args):
     update_pythonpath_relative_hydra()
     args.logging.ckpt_dir = hydra_utils.to_absolute_path(args.logging.ckpt_dir)
     args.logging.tb_dir = hydra_utils.to_absolute_path(args.logging.tb_dir)
     args.data.train_filelist = hydra_utils.to_absolute_path(args.data.train_filelist)
-    # args.data.val_filelist = hydra_utils.to_absolute_path(args.data.val_filelist)
+    args.data.val_filelist = hydra_utils.to_absolute_path(args.data.val_filelist)
 
     # If job is running, ignore
     jobdets = load_jobs()
